@@ -311,7 +311,7 @@ func TestBuildContainers_SandboxDisabled(t *testing.T) {
 
 func TestBuildVolumes_DefaultVolumes(t *testing.T) {
 	r := &AgentRunReconciler{}
-	vols := r.buildVolumes(newTestRun(), false)
+	vols := r.buildVolumes(newTestRun(), false, nil)
 
 	names := map[string]bool{}
 	for _, v := range vols {
@@ -326,7 +326,7 @@ func TestBuildVolumes_DefaultVolumes(t *testing.T) {
 
 func TestBuildVolumes_IPCUsesMemory(t *testing.T) {
 	r := &AgentRunReconciler{}
-	vols := r.buildVolumes(newTestRun(), false)
+	vols := r.buildVolumes(newTestRun(), false, nil)
 
 	for _, v := range vols {
 		if v.Name == "ipc" {
@@ -408,7 +408,7 @@ func TestBuildVolumes_SkillsWithRefs(t *testing.T) {
 	run.Spec.Skills = []sympoziumv1alpha1.SkillRef{
 		{ConfigMapRef: "my-skills"},
 	}
-	vols := r.buildVolumes(run, false)
+	vols := r.buildVolumes(run, false, nil)
 
 	for _, v := range vols {
 		if v.Name == "skills" {
@@ -425,7 +425,7 @@ func TestBuildVolumes_SkillsEmptyWhenNoRefs(t *testing.T) {
 	r := &AgentRunReconciler{}
 	run := newTestRun()
 	run.Spec.Skills = nil
-	vols := r.buildVolumes(run, false)
+	vols := r.buildVolumes(run, false, nil)
 
 	for _, v := range vols {
 		if v.Name == "skills" {
@@ -441,7 +441,7 @@ func TestBuildVolumes_SkillsEmptyWhenNoRefs(t *testing.T) {
 func TestBuildVolumes_MemoryEnabled(t *testing.T) {
 	r := &AgentRunReconciler{}
 	run := newTestRun()
-	vols := r.buildVolumes(run, true)
+	vols := r.buildVolumes(run, true, nil)
 
 	for _, v := range vols {
 		if v.Name == "memory" {
@@ -461,7 +461,7 @@ func TestBuildVolumes_MemoryEnabled(t *testing.T) {
 func TestBuildVolumes_MemoryDisabled(t *testing.T) {
 	r := &AgentRunReconciler{}
 	run := newTestRun()
-	vols := r.buildVolumes(run, false)
+	vols := r.buildVolumes(run, false, nil)
 
 	for _, v := range vols {
 		if v.Name == "memory" {

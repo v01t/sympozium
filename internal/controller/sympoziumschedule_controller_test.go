@@ -7,8 +7,8 @@ import (
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -155,4 +155,3 @@ func TestSympoziumScheduleReconcile_ResolvesProviderFromSecretNameFallback(t *te
 		t.Fatalf("authSecretRef = %q, want inst-b-azure-openai-key", run.Spec.Model.AuthSecretRef)
 	}
 }
-

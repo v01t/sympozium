@@ -2132,15 +2132,15 @@ type tuiModel struct {
 	editField             int    // which field is selected in the current tab
 	editMemory            editMemoryForm
 	editHeartbeat         editHeartbeatForm
-	editTaskInput         bool              // sub-modal for task text entry
-	editTaskTI            textinput.Model   // text input for task sub-modal
-	editChannelTokenInput bool              // sub-modal for channel token entry
-	editChannelTokenTI    textinput.Model   // text input for channel token sub-modal
-	editChannelTokenIdx   int               // index into editChannels being configured
-	editChannelNewTokens  map[int]string    // idx → token for channels needing secret creation
-	editSkillGithubInput  bool              // sub-modal for github-gitops repo entry
-	editSkillGithubTI     textinput.Model   // text input for github repo
-	editSkillGithubIdx    int               // index into editSkills being configured
+	editTaskInput         bool            // sub-modal for task text entry
+	editTaskTI            textinput.Model // text input for task sub-modal
+	editChannelTokenInput bool            // sub-modal for channel token entry
+	editChannelTokenTI    textinput.Model // text input for channel token sub-modal
+	editChannelTokenIdx   int             // index into editChannels being configured
+	editChannelNewTokens  map[int]string  // idx → token for channels needing secret creation
+	editSkillGithubInput  bool            // sub-modal for github-gitops repo entry
+	editSkillGithubTI     textinput.Model // text input for github repo
+	editSkillGithubIdx    int             // index into editSkills being configured
 
 	// GitHub OAuth device-flow auth state (displayed inline in the skills tab)
 	githubAuthActive     bool   // device-flow prompt is visible
@@ -2151,10 +2151,10 @@ type tuiModel struct {
 	githubAuthStatus     string // "pending" | "done" | "error"
 	githubAuthMessage    string // success note or error detail
 
-	editSkills            []editSkillItem   // toggleable skills list
-	editChannels          []editChannelItem // channel bindings
-	editPersonaPackName   string            // non-empty when editing a PersonaPack
-	editPersonas          []editPersonaItem // toggleable personas list
+	editSkills          []editSkillItem   // toggleable skills list
+	editChannels        []editChannelItem // channel bindings
+	editPersonaPackName string            // non-empty when editing a PersonaPack
+	editPersonas        []editPersonaItem // toggleable personas list
 
 	// Detail pane
 	detailPane       detailPaneState // collapsed, panel, or fullscreen

@@ -159,7 +159,7 @@ func (r *SympoziumScheduleReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			AgentID:     fmt.Sprintf("schedule-%s", schedule.Name),
 			Model: sympoziumv1alpha1.ModelSpec{
 				Provider: resolveProvider(instance),
-				Model: instance.Spec.Agents.Default.Model,
+				Model:    instance.Spec.Agents.Default.Model,
 			},
 		},
 	}

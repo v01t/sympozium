@@ -267,14 +267,14 @@ func (s *Server) deleteInstance(w http.ResponseWriter, r *http.Request) {
 
 // CreateInstanceRequest is the request body for creating a new SympoziumInstance.
 type CreateInstanceRequest struct {
-	Name       string `json:"name"`
-	Provider   string `json:"provider"`
-	Model      string `json:"model"`
-	BaseURL    string `json:"baseURL,omitempty"`
-	SecretName string `json:"secretName,omitempty"`
-	APIKey     string `json:"apiKey,omitempty"`
-	PolicyRef  string `json:"policyRef,omitempty"`
-	Skills     []sympoziumv1alpha1.SkillRef   `json:"skills,omitempty"`
+	Name       string                          `json:"name"`
+	Provider   string                          `json:"provider"`
+	Model      string                          `json:"model"`
+	BaseURL    string                          `json:"baseURL,omitempty"`
+	SecretName string                          `json:"secretName,omitempty"`
+	APIKey     string                          `json:"apiKey,omitempty"`
+	PolicyRef  string                          `json:"policyRef,omitempty"`
+	Skills     []sympoziumv1alpha1.SkillRef    `json:"skills,omitempty"`
 	Channels   []sympoziumv1alpha1.ChannelSpec `json:"channels,omitempty"`
 }
 
@@ -1192,11 +1192,11 @@ func (s *Server) installDefaultPersonaPacks(w http.ResponseWriter, r *http.Reque
 	for _, src := range sourceList.Items {
 		var existing sympoziumv1alpha1.PersonaPack
 		err := s.client.Get(r.Context(), types.NamespacedName{Name: src.Name, Namespace: targetNS}, &existing)
-		switch {
-		case err == nil:
+		if err == nil {
 			resp.AlreadyPresent = append(resp.AlreadyPresent, src.Name)
 			continue
-		case err != nil && !k8serrors.IsNotFound(err):
+		}
+		if !k8serrors.IsNotFound(err) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

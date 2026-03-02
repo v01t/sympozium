@@ -46,14 +46,14 @@ const (
 
 // githubAuthState holds in-memory state for an ongoing device flow.
 type githubAuthState struct {
-	mu           sync.Mutex
-	status       string // "pending", "complete", "expired", "error"
-	deviceCode   string
-	userCode     string
-	verifyURI    string
-	expiresAt    time.Time
-	interval     int // polling interval in seconds required by GitHub
-	clientID     string
+	mu         sync.Mutex
+	status     string // "pending", "complete", "expired", "error"
+	deviceCode string
+	userCode   string
+	verifyURI  string
+	expiresAt  time.Time
+	interval   int // polling interval in seconds required by GitHub
+	clientID   string
 }
 
 // package-level singleton — only one auth flow is expected at a time.
@@ -364,5 +364,3 @@ func pollGithubAccessToken(clientID, deviceCode string) (string, bool, error) {
 	}
 	return token, false, nil
 }
-
-
