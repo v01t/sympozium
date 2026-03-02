@@ -35,6 +35,13 @@ pass() { echo -e "${GREEN}✓ $*${NC}"; }
 fail() { echo -e "${RED}✗ $*${NC}"; }
 info() { echo -e "${YELLOW}● $*${NC}"; }
 
+on_error() {
+  local exit_code=$?
+  fail "Provider-switch test failed at line ${1}: ${2} (exit=${exit_code})"
+  exit "$exit_code"
+}
+trap 'on_error ${LINENO} "${BASH_COMMAND}"' ERR
+
 cleanup() {
   info "Cleaning up provider-switch resources..."
   [[ -n "$RUN_OPENAI" ]] && api_request DELETE "/api/v1/runs/${RUN_OPENAI}" >/dev/null 2>&1 || true
@@ -179,7 +186,8 @@ main() {
   resolve_apiserver_token
 
   # Temp PersonaPack with deterministic skills.
-  cat <<EOF | kubectl apply -f - >/dev/null
+  info "Creating temporary PersonaPack '${PACK_NAME}'"
+  cat <<EOF | kubectl apply -f -
 apiVersion: sympozium.ai/v1alpha1
 kind: PersonaPack
 metadata:
@@ -195,11 +203,15 @@ spec:
         - code-review
         - k8s-ops
 EOF
+  pass "Temporary PersonaPack created"
 
-  kubectl create secret generic "$OPENAI_SECRET" --from-literal=OPENAI_API_KEY=inttest-openai -n "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-  kubectl create secret generic "$ANTHROPIC_SECRET" --from-literal=ANTHROPIC_API_KEY=inttest-anthropic -n "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  info "Creating provider auth secrets"
+  kubectl create secret generic "$OPENAI_SECRET" --from-literal=OPENAI_API_KEY=inttest-openai -n "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+  kubectl create secret generic "$ANTHROPIC_SECRET" --from-literal=ANTHROPIC_API_KEY=inttest-anthropic -n "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+  pass "Provider auth secrets ready"
 
   # Enable with OpenAI.
+  info "Patching PersonaPack to OpenAI"
   api_request PATCH "/api/v1/personapacks/${PACK_NAME}" "{\"enabled\":true,\"provider\":\"openai\",\"secretName\":\"${OPENAI_SECRET}\",\"model\":\"${OPENAI_MODEL}\"}" >/dev/null
 
   inst_openai="$(wait_for_instance_model "$OPENAI_MODEL" || true)"
@@ -213,6 +225,7 @@ EOF
   pass "OpenAI propagation to new runs verified"
 
   # Switch to Anthropic.
+  info "Patching PersonaPack to Anthropic"
   api_request PATCH "/api/v1/personapacks/${PACK_NAME}" "{\"enabled\":true,\"provider\":\"anthropic\",\"secretName\":\"${ANTHROPIC_SECRET}\",\"model\":\"${ANTHROPIC_MODEL}\"}" >/dev/null
 
   inst_anthropic="$(wait_for_instance_model "$ANTHROPIC_MODEL" || true)"
