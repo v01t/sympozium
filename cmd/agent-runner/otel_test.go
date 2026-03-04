@@ -179,9 +179,9 @@ func TestOTelSpanHierarchy(t *testing.T) {
 			t.Errorf("expected at least 2 gen_ai.chat spans, got %d; all spans: %v",
 				spanNames["gen_ai.chat"], spanNames)
 		}
-		if spanNames["tool.execute"] < 1 {
-			t.Errorf("expected at least 1 tool.execute span, got %d; all spans: %v",
-				spanNames["tool.execute"], spanNames)
+		if spanNames["gen_ai.execute_tool"] < 1 {
+			t.Errorf("expected at least 1 gen_ai.execute_tool span, got %d; all spans: %v",
+				spanNames["gen_ai.execute_tool"], spanNames)
 		}
 
 		// All spans should share the same trace ID.

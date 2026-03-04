@@ -39,9 +39,9 @@ import (
 )
 
 const (
-	defaultBatchTimeout   = 5 * time.Second
+	defaultBatchTimeout    = 5 * time.Second
 	defaultShutdownTimeout = 30 * time.Second
-	defaultSamplingRatio  = 1.0
+	defaultSamplingRatio   = 1.0
 )
 
 // Config controls how the OTel SDK is initialized for a component.

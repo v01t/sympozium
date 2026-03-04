@@ -142,7 +142,7 @@ func (s *Server) buildMux(frontendFS fs.FS, token string) http.Handler {
 	})
 	mux.Handle("/metrics", promhttp.Handler())
 
-// If a frontend FS is provided, serve it as an SPA fallback.
+	// If a frontend FS is provided, serve it as an SPA fallback.
 	if frontendFS != nil {
 		mux.HandleFunc("/", s.spaHandler(frontendFS))
 	}

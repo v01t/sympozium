@@ -20,8 +20,8 @@ import (
 	sympoziumv1alpha1 "github.com/alexsjones/sympozium/api/v1alpha1"
 	"github.com/alexsjones/sympozium/internal/apiserver"
 	"github.com/alexsjones/sympozium/internal/eventbus"
-webui "github.com/alexsjones/sympozium/web"
-"github.com/alexsjones/sympozium/pkg/telemetry"
+	"github.com/alexsjones/sympozium/pkg/telemetry"
+	webui "github.com/alexsjones/sympozium/web"
 )
 
 var scheme = runtime.NewScheme()
