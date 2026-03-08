@@ -993,15 +993,17 @@ func (s *Server) getPersonaPack(w http.ResponseWriter, r *http.Request) {
 
 // PatchPersonaPackRequest represents a partial update to a PersonaPack.
 type PatchPersonaPackRequest struct {
-	Enabled           *bool             `json:"enabled,omitempty"`
-	Provider          string            `json:"provider,omitempty"`
-	SecretName        string            `json:"secretName,omitempty"`
-	APIKey            string            `json:"apiKey,omitempty"`
-	Model             string            `json:"model,omitempty"`
-	BaseURL           string            `json:"baseURL,omitempty"`
-	ChannelConfigs    map[string]string `json:"channelConfigs,omitempty"`
-	PolicyRef         string            `json:"policyRef,omitempty"`
-	HeartbeatInterval string            `json:"heartbeatInterval,omitempty"`
+	Enabled           *bool                        `json:"enabled,omitempty"`
+	Provider          string                       `json:"provider,omitempty"`
+	SecretName        string                       `json:"secretName,omitempty"`
+	APIKey            string                       `json:"apiKey,omitempty"`
+	Model             string                       `json:"model,omitempty"`
+	BaseURL           string                       `json:"baseURL,omitempty"`
+	ChannelConfigs    map[string]string            `json:"channelConfigs,omitempty"`
+	PolicyRef         string                       `json:"policyRef,omitempty"`
+	HeartbeatInterval string                       `json:"heartbeatInterval,omitempty"`
+	SkillParams       map[string]map[string]string `json:"skillParams,omitempty"`
+	GithubToken       string                       `json:"githubToken,omitempty"`
 }
 
 func (s *Server) patchPersonaPack(w http.ResponseWriter, r *http.Request) {
@@ -1103,6 +1105,23 @@ func (s *Server) patchPersonaPack(w http.ResponseWriter, r *http.Request) {
 				pp.Spec.Personas[i].Schedule.Interval = req.HeartbeatInterval
 				pp.Spec.Personas[i].Schedule.Cron = "" // clear cron so interval takes precedence
 			}
+		}
+	}
+
+	if len(req.SkillParams) > 0 {
+		if pp.Spec.SkillParams == nil {
+			pp.Spec.SkillParams = make(map[string]map[string]string)
+		}
+		for skill, params := range req.SkillParams {
+			pp.Spec.SkillParams[skill] = params
+		}
+	}
+
+	// Store GitHub token as a cluster secret when provided inline.
+	if req.GithubToken != "" {
+		if err := s.writeGithubTokenSecret(req.GithubToken); err != nil {
+			http.Error(w, "failed to store GitHub token: "+err.Error(), http.StatusInternalServerError)
+			return
 		}
 	}
 

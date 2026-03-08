@@ -409,6 +409,8 @@ export interface PersonaPackSpec {
   excludePersonas?: string[];
   channelConfigs?: Record<string, string>;
   policyRef?: string;
+  skillParams?: Record<string, Record<string, string>>;
+  taskOverride?: string;
 }
 
 export interface PersonaPackStatus {
@@ -640,6 +642,8 @@ export const api = {
         channelConfigs?: Record<string, string>;
         policyRef?: string;
         heartbeatInterval?: string;
+        skillParams?: Record<string, Record<string, string>>;
+        githubToken?: string;
       }
     ) =>
       apiFetch<PersonaPack>(`/api/v1/personapacks/${name}`, {
