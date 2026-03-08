@@ -397,9 +397,16 @@ func (r *PersonaPackReconciler) buildInstance(
 
 	// Skills
 	for _, s := range persona.Skills {
-		inst.Spec.Skills = append(inst.Spec.Skills, sympoziumv1alpha1.SkillRef{
+		ref := sympoziumv1alpha1.SkillRef{
 			SkillPackRef: s,
-		})
+		}
+		// Apply pack-level skill params if configured (e.g. repo for github-gitops).
+		if pack.Spec.SkillParams != nil {
+			if params, ok := pack.Spec.SkillParams[s]; ok && len(params) > 0 {
+				ref.Params = params
+			}
+		}
+		inst.Spec.Skills = append(inst.Spec.Skills, ref)
 	}
 
 	// Channels

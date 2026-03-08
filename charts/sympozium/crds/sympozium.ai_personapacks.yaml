@@ -230,6 +230,17 @@ spec:
                 description: PolicyRef references the SympoziumPolicy to apply to
                   all generated instances.
                 type: string
+              skillParams:
+                additionalProperties:
+                  additionalProperties:
+                    type: string
+                  type: object
+                description: |-
+                  SkillParams provides per-skill parameters applied to all generated instances.
+                  The outer key is the SkillPack name (e.g. "github-gitops"), and the inner map
+                  holds key/value pairs injected as SKILL_<KEY> environment variables.
+                  Set during onboarding when the user configures skill-specific settings.
+                type: object
               version:
                 description: Version is the persona pack version.
                 type: string

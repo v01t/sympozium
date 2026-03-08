@@ -50,6 +50,13 @@ type PersonaPackSpec struct {
 	// PolicyRef references the SympoziumPolicy to apply to all generated instances.
 	// +optional
 	PolicyRef string `json:"policyRef,omitempty"`
+
+	// SkillParams provides per-skill parameters applied to all generated instances.
+	// The outer key is the SkillPack name (e.g. "github-gitops"), and the inner map
+	// holds key/value pairs injected as SKILL_<KEY> environment variables.
+	// Set during onboarding when the user configures skill-specific settings.
+	// +optional
+	SkillParams map[string]map[string]string `json:"skillParams,omitempty"`
 }
 
 // PersonaSpec defines a single agent persona within a PersonaPack.

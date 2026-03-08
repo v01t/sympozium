@@ -2008,6 +2008,7 @@ const (
 	wizStepModel                   // text: model name
 	wizStepBaseURL                 // text: base URL (some providers)
 	wizStepAPIKey                  // text: API key (non-ollama)
+	wizStepGithubRepo              // text: GitHub repo (owner/repo)
 	wizStepChannel                 // menu 1-5: channel type
 	wizStepChannelToken            // text: channel bot token
 	wizStepPolicy                  // y/n: apply default policy
@@ -2023,6 +2024,7 @@ const (
 	wizStepPersonaBaseURL      // text: base URL
 	wizStepPersonaAPIKey       // text: API key
 	wizStepPersonaModel        // text: model name
+	wizStepPersonaGithubRepo   // text: GitHub repo (owner/repo)
 	wizStepPersonaChannels     // multi-toggle: channels to bind
 	wizStepPersonaChannelToken // text: channel token (per selected channel)
 	wizStepPersonaHeartbeat    // menu 1-5: heartbeat interval override
@@ -2052,6 +2054,7 @@ type wizardState struct {
 	applyPolicy     bool
 	heartbeatCron   string // cron expression for heartbeat schedule
 	heartbeatLabel  string // human-readable label (e.g. "every hour")
+	githubRepo      string // GitHub repo (owner/repo) for github-gitops skill
 
 	// Dynamic model list (fetched from provider API when key is supplied).
 	fetchedModels []string // model IDs fetched from the API
@@ -8071,13 +8074,12 @@ func (m tuiModel) advanceWizard(val string) (tea.Model, tea.Cmd) {
 			}
 		}
 		w.modelName = val
-		if w.secretEnvKey == "" || w.apiKey != "" {
-			// Already have the key (or don't need one) — skip to channel.
-			w.step = wizStepChannel
-			m.input.Placeholder = "Channel [1-5] (default: 5 — skip)"
-			return m, nil
-		}
-		// Edge case: key was skipped — already handled above.
+		w.step = wizStepGithubRepo
+		m.input.Placeholder = "GitHub repo owner/repo (Enter to skip)"
+		return m, nil
+
+	case wizStepGithubRepo:
+		w.githubRepo = strings.TrimSpace(val)
 		w.step = wizStepChannel
 		m.input.Placeholder = "Channel [1-5] (default: 5 — skip)"
 		return m, nil
@@ -8326,6 +8328,35 @@ func (m tuiModel) advanceWizard(val string) (tea.Model, tea.Cmd) {
 			}
 		}
 		w.modelName = val
+		// Check if any persona in the pack uses github-gitops.
+		hasGithub := false
+		for _, pp := range m.personaPacks {
+			if pp.Name == w.personaPackName {
+				for _, p := range pp.Spec.Personas {
+					for _, sk := range p.Skills {
+						if sk == "github-gitops" {
+							hasGithub = true
+							break
+						}
+					}
+					if hasGithub {
+						break
+					}
+				}
+				break
+			}
+		}
+		if hasGithub {
+			w.step = wizStepPersonaGithubRepo
+			m.input.Placeholder = "GitHub repo owner/repo (e.g. myorg/myapp)"
+			return m, nil
+		}
+		w.step = wizStepPersonaChannels
+		m.input.Placeholder = "Toggle channels with number, Enter when done"
+		return m, nil
+
+	case wizStepPersonaGithubRepo:
+		w.githubRepo = strings.TrimSpace(val)
 		w.step = wizStepPersonaChannels
 		m.input.Placeholder = "Toggle channels with number, Enter when done"
 		return m, nil
@@ -8479,6 +8510,9 @@ func (m tuiModel) renderWizardPanel(h int) string {
 			lines = append(lines, hintStyle.Render("  API Key:  ")+valueStyle.Render("••••••••"))
 		}
 	}
+	if w.githubRepo != "" && w.step > wizStepGithubRepo {
+		lines = append(lines, hintStyle.Render("  GitHub:   ")+valueStyle.Render(w.githubRepo))
+	}
 	if w.step > wizStepChannelToken && w.step > wizStepChannel {
 		stepNum = 4
 		if w.channelType != "" {
@@ -8511,16 +8545,16 @@ func (m tuiModel) renderWizardPanel(h int) string {
 	// Show current step prompt.
 	switch w.step {
 	case wizStepCheckCluster:
-		lines = append(lines, stepStyle.Render("  📋 Step 1/6 — Checking cluster..."))
+		lines = append(lines, stepStyle.Render("  📋 Step 1/7 — Checking cluster..."))
 
 	case wizStepInstanceName:
-		lines = append(lines, stepStyle.Render("  📋 Step 1/6 — Create your SympoziumInstance"))
+		lines = append(lines, stepStyle.Render("  📋 Step 1/7 — Create your SympoziumInstance"))
 		lines = append(lines, menuStyle.Render("  An instance represents you (or a tenant) in the system."))
 		lines = append(lines, "")
 		lines = append(lines, labelStyle.Render("  Enter instance name:"))
 
 	case wizStepProvider:
-		lines = append(lines, stepStyle.Render("  📋 Step 2/6 — AI Provider"))
+		lines = append(lines, stepStyle.Render("  📋 Step 2/7 — AI Provider"))
 		lines = append(lines, menuStyle.Render("  Which model provider do you want to use?"))
 		lines = append(lines, "")
 		lines = append(lines, menuNumStyle.Render("  1)")+menuStyle.Render(" OpenAI"))
@@ -8530,11 +8564,11 @@ func (m tuiModel) renderWizardPanel(h int) string {
 		lines = append(lines, menuNumStyle.Render("  5)")+menuStyle.Render(" Other / OpenAI-compatible"))
 
 	case wizStepBaseURL:
-		lines = append(lines, stepStyle.Render("  📋 Step 2/6 — AI Provider (continued)"))
+		lines = append(lines, stepStyle.Render("  📋 Step 2/7 — AI Provider (continued)"))
 		lines = append(lines, labelStyle.Render("  Enter base URL:"))
 
 	case wizStepAPIKey:
-		lines = append(lines, stepStyle.Render("  📋 Step 2/6 — AI Provider (continued)"))
+		lines = append(lines, stepStyle.Render("  📋 Step 2/7 — AI Provider (continued)"))
 		lines = append(lines, labelStyle.Render(fmt.Sprintf("  Paste your %s:", w.secretEnvKey)))
 		envVal := os.Getenv(w.secretEnvKey)
 		if envVal != "" {
@@ -8545,7 +8579,7 @@ func (m tuiModel) renderWizardPanel(h int) string {
 		lines = append(lines, hintStyle.Render("  (providing a key lets us fetch your available models)"))
 
 	case wizStepModel:
-		lines = append(lines, stepStyle.Render("  📋 Step 2/6 — Select Model"))
+		lines = append(lines, stepStyle.Render("  📋 Step 2/7 — Select Model"))
 		if len(w.fetchedModels) > 0 {
 			lines = append(lines, menuStyle.Render(fmt.Sprintf("  Found %d models from your %s account:", len(w.fetchedModels), w.providerName)))
 			lines = append(lines, "")
@@ -8609,8 +8643,16 @@ func (m tuiModel) renderWizardPanel(h int) string {
 			lines = append(lines, labelStyle.Render("  Enter model name:"))
 		}
 
+	case wizStepGithubRepo:
+		lines = append(lines, stepStyle.Render("  📋 Step 3/7 — GitHub Repository (optional)"))
+		lines = append(lines, menuStyle.Render("  Point your agent at a GitHub repository to enable"))
+		lines = append(lines, menuStyle.Render("  issue triage, PR reviews, and code contributions."))
+		lines = append(lines, "")
+		lines = append(lines, labelStyle.Render("  Enter repo (owner/repo):"))
+		lines = append(lines, hintStyle.Render("  Press Enter to skip — you can configure this later."))
+
 	case wizStepChannel:
-		lines = append(lines, stepStyle.Render("  📋 Step 3/6 — Connect a Channel (optional)"))
+		lines = append(lines, stepStyle.Render("  📋 Step 4/7 — Connect a Channel (optional)"))
 		lines = append(lines, menuStyle.Render("  Channels let your agent receive messages from external platforms."))
 		lines = append(lines, "")
 		lines = append(lines, menuNumStyle.Render("  1)")+menuStyle.Render(" Telegram  — easiest, just talk to @BotFather"))
@@ -8620,16 +8662,16 @@ func (m tuiModel) renderWizardPanel(h int) string {
 		lines = append(lines, menuNumStyle.Render("  5)")+menuStyle.Render(" Skip — I'll add a channel later"))
 
 	case wizStepChannelToken:
-		lines = append(lines, stepStyle.Render("  📋 Step 3/6 — Connect a Channel (continued)"))
+		lines = append(lines, stepStyle.Render("  📋 Step 4/7 — Connect a Channel (continued)"))
 		lines = append(lines, labelStyle.Render(fmt.Sprintf("  Paste your %s token:", w.channelType)))
 
 	case wizStepPolicy:
-		lines = append(lines, stepStyle.Render("  📋 Step 4/6 — Default Policy"))
+		lines = append(lines, stepStyle.Render("  📋 Step 5/7 — Default Policy"))
 		lines = append(lines, menuStyle.Render("  A SympoziumPolicy controls what tools agents can use, sandboxing, etc."))
 		lines = append(lines, labelStyle.Render("  Apply the default policy?"))
 
 	case wizStepHeartbeat:
-		lines = append(lines, stepStyle.Render("  📋 Step 5/6 — Heartbeat Schedule"))
+		lines = append(lines, stepStyle.Render("  📋 Step 6/7 — Heartbeat Schedule"))
 		lines = append(lines, menuStyle.Render("  A heartbeat lets your agent wake up periodically to review memory"))
 		lines = append(lines, menuStyle.Render("  and note anything that needs attention."))
 		lines = append(lines, "")
@@ -8640,7 +8682,7 @@ func (m tuiModel) renderWizardPanel(h int) string {
 		lines = append(lines, menuNumStyle.Render("  5)")+menuStyle.Render(" Disabled — no heartbeat"))
 
 	case wizStepConfirm:
-		lines = append(lines, stepStyle.Render("  📋 Step 6/6 — Confirm"))
+		lines = append(lines, stepStyle.Render("  📋 Step 7/7 — Confirm"))
 		lines = append(lines, "")
 		lines = append(lines, tuiSepStyle.Render("  "+strings.Repeat("━", 50)))
 		lines = append(lines, labelStyle.Render("  Summary"))
@@ -8651,6 +8693,9 @@ func (m tuiModel) renderWizardPanel(h int) string {
 			hintStyle.Render("  (model: ")+valueStyle.Render(w.modelName)+hintStyle.Render(")"))
 		if w.baseURL != "" {
 			lines = append(lines, hintStyle.Render("  Base URL:  ")+valueStyle.Render(w.baseURL))
+		}
+		if w.githubRepo != "" {
+			lines = append(lines, hintStyle.Render("  GitHub:    ")+valueStyle.Render(w.githubRepo))
 		}
 		if w.channelType != "" {
 			lines = append(lines, hintStyle.Render("  Channel:   ")+valueStyle.Render(w.channelType))
@@ -8790,6 +8835,9 @@ func (m tuiModel) renderPersonaWizardPanel(h int,
 	if w.apiKey != "" && w.step > wizStepPersonaAPIKey {
 		lines = append(lines, hintStyle.Render("  API Key: ")+valueStyle.Render("••••"+w.apiKey[max(0, len(w.apiKey)-4):]))
 	}
+	if w.githubRepo != "" && w.step > wizStepPersonaGithubRepo {
+		lines = append(lines, hintStyle.Render("  GitHub:  ")+valueStyle.Render(w.githubRepo))
+	}
 
 	// Current step.
 	switch w.step {
@@ -8853,8 +8901,17 @@ func (m tuiModel) renderPersonaWizardPanel(h int,
 			lines = append(lines, "")
 		}
 
+	case wizStepPersonaGithubRepo:
+		lines = append(lines, stepStyle.Render("  Step 5: GitHub Repository"))
+		lines = append(lines, "")
+		lines = append(lines, hintStyle.Render("  This pack uses the github-gitops skill."))
+		lines = append(lines, hintStyle.Render("  Point all personas at a GitHub repository for"))
+		lines = append(lines, hintStyle.Render("  issue triage, PR reviews, and code contributions."))
+		lines = append(lines, "")
+		lines = append(lines, labelStyle.Render("  Enter repo (owner/repo):"))
+
 	case wizStepPersonaChannels:
-		lines = append(lines, stepStyle.Render("  Step 5: Channel Bindings"))
+		lines = append(lines, stepStyle.Render("  Step 6: Channel Bindings"))
 		lines = append(lines, "")
 		lines = append(lines, hintStyle.Render("  Toggle channels to bind to all personas in this pack."))
 		lines = append(lines, hintStyle.Render("  Type a number to toggle, press Enter when done."))
@@ -8872,14 +8929,14 @@ func (m tuiModel) renderPersonaWizardPanel(h int,
 	case wizStepPersonaChannelToken:
 		if w.personaChannelIdx < len(w.personaChannels) {
 			ch := w.personaChannels[w.personaChannelIdx]
-			lines = append(lines, stepStyle.Render(fmt.Sprintf("  Step 5b: %s Token", strings.Title(ch.chType))))
+			lines = append(lines, stepStyle.Render(fmt.Sprintf("  Step 6b: %s Token", strings.Title(ch.chType))))
 			lines = append(lines, "")
 			lines = append(lines, hintStyle.Render(fmt.Sprintf("  Paste %s or press Enter to skip.", ch.tokenKey)))
 		}
 		lines = append(lines, "")
 
 	case wizStepPersonaHeartbeat:
-		lines = append(lines, stepStyle.Render("  Step 6: Heartbeat Interval"))
+		lines = append(lines, stepStyle.Render("  Step 7: Heartbeat Interval"))
 		lines = append(lines, "")
 		lines = append(lines, hintStyle.Render("  How often should personas wake up?"))
 		lines = append(lines, hintStyle.Render("  This overrides each persona's default schedule."))
@@ -8892,12 +8949,15 @@ func (m tuiModel) renderPersonaWizardPanel(h int,
 		lines = append(lines, "")
 
 	case wizStepPersonaConfirm:
-		lines = append(lines, stepStyle.Render("  Step 7: Confirm"))
+		lines = append(lines, stepStyle.Render("  Step 8: Confirm"))
 		lines = append(lines, "")
 		lines = append(lines, labelStyle.Render("  Summary:"))
 		lines = append(lines, hintStyle.Render("  Pack:      ")+valueStyle.Render(w.personaPackName))
 		lines = append(lines, hintStyle.Render("  Provider:  ")+valueStyle.Render(w.providerName))
 		lines = append(lines, hintStyle.Render("  Model:     ")+valueStyle.Render(w.modelName))
+		if w.githubRepo != "" {
+			lines = append(lines, hintStyle.Render("  GitHub:    ")+valueStyle.Render(w.githubRepo))
+		}
 		hbLabel := w.heartbeatLabel
 		if hbLabel == "" {
 			hbLabel = "every hour"
@@ -9219,6 +9279,14 @@ func tuiPersonaApply(ns string, w *wizardState) (string, error) {
 		},
 	}
 
+	// Store GitHub repo as skill params so the controller passes it to instances.
+	if w.githubRepo != "" {
+		if pack.Spec.SkillParams == nil {
+			pack.Spec.SkillParams = make(map[string]map[string]string)
+		}
+		pack.Spec.SkillParams["github-gitops"] = map[string]string{"repo": w.githubRepo}
+	}
+
 	// Update each persona with the chosen model and channel bindings.
 	var enabledChannels []string
 	channelConfigs := make(map[string]string)
@@ -9397,6 +9465,14 @@ func tuiOnboardApply(ns string, w *wizardState) (string, error) {
 	inst.Spec.Skills = []sympoziumv1alpha1.SkillRef{
 		{SkillPackRef: "k8s-ops"},
 		{SkillPackRef: "llmfit"},
+	}
+
+	// Add github-gitops skill if a repo was specified.
+	if w.githubRepo != "" {
+		inst.Spec.Skills = append(inst.Spec.Skills, sympoziumv1alpha1.SkillRef{
+			SkillPackRef: "github-gitops",
+			Params:       map[string]string{"repo": w.githubRepo},
+		})
 	}
 
 	// Memory is on by default.
