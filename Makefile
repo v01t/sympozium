@@ -121,10 +121,10 @@ web-install: ## Install frontend dependencies
 web-build: web-install ## Build the frontend for embedding
 	cd web && npm run build
 
-web-dev: ## Start the frontend dev server (hot-reload, proxy to :8080)
+web-dev: web-install ## Start the frontend dev server (hot-reload, proxy to :8080)
 	cd web && npm run dev
 
-web-dev-serve: ## Vite hot-reload + port-forward to in-cluster apiserver (no rebuild needed)
+web-dev-serve: web-install ## Vite hot-reload + port-forward to in-cluster apiserver (no rebuild needed)
 	@APISERVER_TOKEN=$$( \
 		kubectl get deploy -n $(SYMPOZIUM_NAMESPACE) sympozium-apiserver -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SYMPOZIUM_UI_TOKEN")].value}' 2>/dev/null \
 	); \
@@ -174,7 +174,7 @@ web-dev-serve: ## Vite hot-reload + port-forward to in-cluster apiserver (no reb
 		exit 1; \
 	fi; \
 	echo "==> Port-forward ready (localhost:8080)."; \
-	cd web && npx vite --port $(VITE_PORT)
+	cd web && npm run dev -- --port $(VITE_PORT)
 
 web-clean: ## Remove frontend build artifacts
 	rm -rf web/dist web/node_modules

@@ -36,6 +36,16 @@ const (
 	defaultHealthPort = 9473
 )
 
+// defaultHost returns "host.docker.internal" when it resolves (Docker Desktop),
+// otherwise "127.0.0.1". This lets probes reach host-local inference servers
+// from inside kind/Docker containers without config changes.
+func defaultHost() string {
+	if addrs, err := net.LookupHost("host.docker.internal"); err == nil && len(addrs) > 0 {
+		return "host.docker.internal"
+	}
+	return "127.0.0.1"
+}
+
 // ProbeConfig is the top-level config loaded from the ConfigMap.
 type ProbeConfig struct {
 	ProbeInterval string        `yaml:"probeInterval"`
@@ -151,7 +161,7 @@ func main() {
 	// Start health + proxy server.
 	go serveHealthAndProxy(registry)
 
-	log.Info("starting node-probe", "node", nodeName, "interval", interval, "targets", len(cfg.Targets))
+	log.Info("starting node-probe", "node", nodeName, "interval", interval, "targets", len(cfg.Targets), "defaultHost", defaultHost())
 
 	// Run the first probe immediately.
 	runProbeLoop(ctx, clientset, nodeName, cfg.Targets, interval, registry)
@@ -210,9 +220,9 @@ func probeAll(targets []ProbeTarget) []ProbeResult {
 		result := probeTarget(client, t)
 		results = append(results, result)
 		if result.Alive {
-			log.V(1).Info("probe succeeded", "target", t.Name, "port", t.Port, "models", len(result.Models))
+			log.Info("probe succeeded", "target", t.Name, "port", t.Port, "models", result.Models)
 		} else {
-			log.V(1).Info("probe failed", "target", t.Name, "port", t.Port)
+			log.Info("probe failed", "target", t.Name, "port", t.Port)
 		}
 	}
 	return results
@@ -235,16 +245,18 @@ func probeTarget(client *http.Client, target ProbeTarget) ProbeResult {
 
 	host := target.Host
 	if host == "" {
-		host = "localhost"
+		host = defaultHost()
 	}
-	url := fmt.Sprintf("http://%s:%d%s", host, target.Port, probePath)
-	resp, err := client.Get(url)
+	probeURL := fmt.Sprintf("http://%s:%d%s", host, target.Port, probePath)
+	resp, err := client.Get(probeURL)
 	if err != nil {
+		log.Info("probe connection failed", "target", target.Name, "url", probeURL, "error", err.Error())
 		return result
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		log.Info("probe got non-OK status", "target", target.Name, "url", probeURL, "status", resp.StatusCode)
 		return result
 	}
 
@@ -364,7 +376,7 @@ func patchNodeAnnotations(ctx context.Context, clientset kubernetes.Interface, n
 		return fmt.Errorf("patching node %s: %w", nodeName, err)
 	}
 
-	log.V(1).Info("patched node annotations", "node", nodeName)
+	log.Info("patched node annotations", "node", nodeName)
 	return nil
 }
 
@@ -425,7 +437,7 @@ func buildProxyHandler(registry *targetRegistry) http.HandlerFunc {
 
 		host := target.Host
 		if host == "" {
-			host = "localhost"
+			host = defaultHost()
 		}
 		upstream, err := url.Parse(fmt.Sprintf("http://%s:%d", host, target.Port))
 		if err != nil {

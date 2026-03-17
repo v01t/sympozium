@@ -69,7 +69,7 @@ async function fetchProviderModelsViaProxy(baseURL: string): Promise<string[]> {
  * Falls back to a curated static list if the API call fails or no key is given.
  */
 export function useModelList(provider: string, apiKey: string, baseURL?: string) {
-  const isLocalProvider = provider === "ollama" || provider === "custom";
+  const isLocalProvider = provider === "ollama" || provider === "lm-studio" || provider === "custom";
   const canFetchLocal = isLocalProvider && !!baseURL;
   const canFetchCloud = !!apiKey && (provider === "openai" || provider === "anthropic");
 

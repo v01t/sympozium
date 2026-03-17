@@ -101,6 +101,7 @@ func TestProbeTarget_OllamaFormat(t *testing.T) {
 	client := &http.Client{Timeout: 3e9}
 	result := probeTarget(client, ProbeTarget{
 		Name:       "ollama",
+		Host:       "127.0.0.1",
 		Port:       port,
 		HealthPath: "/api/tags",
 		ModelsPath: "/api/tags",
@@ -279,6 +280,7 @@ func TestProbeTarget_LMStudioFormat(t *testing.T) {
 	client := &http.Client{Timeout: 3e9}
 	result := probeTarget(client, ProbeTarget{
 		Name:       "lm-studio",
+		Host:       "127.0.0.1",
 		Port:       port,
 		HealthPath: "/v1/models",
 		ModelsPath: "/v1/models",
