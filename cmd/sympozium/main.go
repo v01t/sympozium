@@ -10079,7 +10079,7 @@ the login URL.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&localPort, "port", "8080", "Local port to forward to")
+	cmd.Flags().StringVar(&localPort, "port", "9090", "Local port to forward to")
 	cmd.Flags().BoolVar(&openBrowser, "open", false, "Open a browser automatically")
 	cmd.Flags().StringVar(&svcNamespace, "service-namespace", "sympozium-system", "Namespace of the sympozium-apiserver service")
 
