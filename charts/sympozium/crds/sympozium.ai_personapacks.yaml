@@ -79,6 +79,12 @@ spec:
                   - secret
                   type: object
                 type: array
+              baseURL:
+                description: |-
+                  BaseURL overrides the provider's default API endpoint for all generated instances.
+                  Set during onboarding for local providers (e.g. Ollama, LM Studio) that do not
+                  require authentication.
+                type: string
               category:
                 description: Category classifies this persona pack (e.g. "platform",
                   "security", "devops").
