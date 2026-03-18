@@ -85,6 +85,7 @@ Running without a subcommand launches the interactive TUI.`,
 		newRunsCmd(),
 		newPoliciesCmd(),
 		newSkillsCmd(),
+		newMCPServersCmd(),
 		newFeaturesCmd(),
 		newVersionCmd(),
 		newTUICmd(),
@@ -330,6 +331,120 @@ func newSkillsCmd() *cobra.Command {
 						sk.Name, len(sk.Spec.Skills), sk.Status.ConfigMapName, age)
 				}
 				return w.Flush()
+			},
+		},
+	)
+	return cmd
+}
+
+func newMCPServersCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "mcp-servers",
+		Aliases: []string{"mcp-server", "mcp"},
+		Short:   "Manage MCP servers",
+	}
+
+	createCmd := &cobra.Command{
+		Use:   "create [name]",
+		Short: "Create an MCP server",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			transport, _ := cmd.Flags().GetString("transport")
+			prefix, _ := cmd.Flags().GetString("prefix")
+			image, _ := cmd.Flags().GetString("image")
+			mcpURL, _ := cmd.Flags().GetString("url")
+			timeout, _ := cmd.Flags().GetInt("timeout")
+
+			if prefix == "" {
+				return fmt.Errorf("--prefix is required")
+			}
+			if transport == "" {
+				transport = "http"
+			}
+
+			mcp := &sympoziumv1alpha1.MCPServer{
+				ObjectMeta: metav1.ObjectMeta{Name: args[0], Namespace: namespace},
+				Spec: sympoziumv1alpha1.MCPServerSpec{
+					TransportType: transport,
+					ToolsPrefix:   prefix,
+					URL:           mcpURL,
+					Timeout:       timeout,
+				},
+			}
+			if image != "" {
+				mcp.Spec.Deployment = &sympoziumv1alpha1.MCPServerDeployment{
+					Image: image,
+				}
+			}
+			if err := k8sClient.Create(ctx, mcp); err != nil {
+				return err
+			}
+			fmt.Printf("mcpserver/%s created\n", args[0])
+			return nil
+		},
+	}
+	createCmd.Flags().String("transport", "http", "Transport type (http or stdio)")
+	createCmd.Flags().String("prefix", "", "Tools prefix (required)")
+	createCmd.Flags().String("image", "", "Container image for managed deployment")
+	createCmd.Flags().String("url", "", "URL for external MCP server")
+	createCmd.Flags().Int("timeout", 30, "Per-request timeout in seconds")
+
+	cmd.AddCommand(
+		&cobra.Command{
+			Use:   "list",
+			Short: "List MCP servers",
+			RunE: func(cmd *cobra.Command, args []string) error {
+				ctx := context.Background()
+				var list sympoziumv1alpha1.MCPServerList
+				if err := k8sClient.List(ctx, &list, client.InNamespace(namespace)); err != nil {
+					return err
+				}
+				w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+				fmt.Fprintln(w, "NAME\tTRANSPORT\tREADY\tURL\tTOOLS\tAGE")
+				for _, mcp := range list.Items {
+					age := time.Since(mcp.CreationTimestamp.Time).Round(time.Second)
+					url := mcp.Status.URL
+					if url == "" {
+						url = mcp.Spec.URL
+					}
+					fmt.Fprintf(w, "%s\t%s\t%v\t%s\t%d\t%s\n",
+						mcp.Name, mcp.Spec.TransportType, mcp.Status.Ready,
+						url, mcp.Status.ToolCount, age)
+				}
+				return w.Flush()
+			},
+		},
+		&cobra.Command{
+			Use:   "get [name]",
+			Short: "Get an MCP server",
+			Args:  cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				ctx := context.Background()
+				var mcp sympoziumv1alpha1.MCPServer
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: args[0], Namespace: namespace}, &mcp); err != nil {
+					return err
+				}
+				data, _ := json.MarshalIndent(mcp, "", "  ")
+				fmt.Println(string(data))
+				return nil
+			},
+		},
+		createCmd,
+		&cobra.Command{
+			Use:   "delete [name]",
+			Short: "Delete an MCP server",
+			Args:  cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				ctx := context.Background()
+				mcp := &sympoziumv1alpha1.MCPServer{
+					ObjectMeta: metav1.ObjectMeta{Name: args[0], Namespace: namespace},
+				}
+				if err := k8sClient.Delete(ctx, mcp); err != nil {
+					return err
+				}
+				fmt.Printf("mcpserver/%s deleted\n", args[0])
+				return nil
 			},
 		},
 	)

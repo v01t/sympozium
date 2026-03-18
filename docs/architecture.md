@@ -8,7 +8,7 @@ graph TB
         direction TB
 
         subgraph CP["Control Plane"]
-            CM["Controller Manager<br/><small>SympoziumInstance · AgentRun · PersonaPack<br/>SympoziumPolicy · SkillPack · SympoziumSchedule</small>"]
+            CM["Controller Manager<br/><small>SympoziumInstance · AgentRun · PersonaPack<br/>SympoziumPolicy · SkillPack · SympoziumSchedule · MCPServer</small>"]
             API["API Server<br/><small>HTTP + WebSocket</small>"]
             WH["Admission Webhook<br/><small>Policy enforcement</small>"]
             NATS[("NATS JetStream<br/><small>Event bus</small>")]
@@ -47,6 +47,15 @@ graph TB
             A1 -. optional .- SB
             A1 -. "/workspace" .- SKS
         end
+
+        subgraph MCP["MCP Servers  ·  external tool providers"]
+            MCPS["MCPServer Controller<br/><small>Deployment + Service<br/>tool discovery</small>"]
+            MCPB["MCP Bridge Sidecar<br/><small>SSE/stdio adapter</small>"]
+            MCPS -- "deploys &<br/>probes tools" --> MCPB
+        end
+
+        CM -- "reconciles" --> MCP
+        MCPB -. "tools via<br/>mcp-bridge skill" .- A1
 
         subgraph SEC["Skill RBAC  ·  ephemeral, least-privilege"]
             SR["Role + RoleBinding<br/><small>namespace-scoped<br/>ownerRef → AgentRun</small>"]
@@ -99,6 +108,7 @@ graph TB
     style MEM fill:#1c2333,stroke:#7c3aed,color:#fff
     style SEC fill:#1c2333,stroke:#238636,color:#fff
     style DATA fill:#161b22,stroke:#30363d,color:#c9d1d9
+    style MCP fill:#1c2333,stroke:#0ea5e9,color:#fff
     style NP fill:#1c2333,stroke:#f5a623,color:#fff
     style NATS fill:#e94560,stroke:#fff,color:#fff
     style USER fill:#238636,stroke:#fff,color:#fff
@@ -113,8 +123,9 @@ graph TB
 3. **The agent container** calls the configured LLM provider (OpenAI, Anthropic, Azure, Ollama, or any OpenAI-compatible endpoint), with skills mounted as files, persistent memory injected from a ConfigMap, and tool sidecars providing runtime capabilities like `kubectl`.
 4. **Results flow back** through the IPC bridge → NATS → channel pod → user. The controller extracts structured results and memory updates from pod logs.
 5. **Web endpoints** expose agents as HTTP APIs. When an instance has the `web-endpoint` skill, the controller creates a long-lived Deployment (serving mode) with a web-proxy sidecar. The proxy accepts OpenAI-compatible (`/v1/chat/completions`) and MCP (`/sse`, `/message`) requests, creating per-request AgentRun Jobs. An Envoy Gateway with per-instance HTTPRoutes provides external access with TLS.
-6. **Node-based inference discovery** — for local inference providers (Ollama, vLLM, llama-cpp) installed directly on host nodes, an optional node-probe DaemonSet probes localhost ports and annotates each node with discovered providers and models (`sympozium.ai/inference-*`). The API server reads these annotations, and the web wizard lets users select a node to pin their agent pods to via `nodeSelector`.
-7. **Everything is a Kubernetes resource** — instances, runs, policies, skills, and schedules are all CRDs. Lifecycle is managed by controllers. Access is gated by admission webhooks. Network isolation is enforced by NetworkPolicy. The TUI and web dashboard give you full visibility into the entire system.
+6. **MCP server integration** — `MCPServer` CRDs define external tool providers using the Model Context Protocol. The controller deploys managed servers (from container images) or connects to external ones, probes them for available tools, and records discovered tools in the resource status. Agent pods access MCP tools through the `mcp-bridge` skill sidecar, which translates between the agent's tool interface and MCP's SSE/stdio transport. Tool names are prefixed to avoid collisions when multiple MCP servers are active. The web UI and CLI provide full CRUD management.
+7. **Node-based inference discovery** — for local inference providers (Ollama, vLLM, llama-cpp) installed directly on host nodes, an optional node-probe DaemonSet probes localhost ports and annotates each node with discovered providers and models (`sympozium.ai/inference-*`). The API server reads these annotations, and the web wizard lets users select a node to pin their agent pods to via `nodeSelector`.
+8. **Everything is a Kubernetes resource** — instances, runs, policies, skills, and schedules are all CRDs. Lifecycle is managed by controllers. Access is gated by admission webhooks. Network isolation is enforced by NetworkPolicy. The TUI and web dashboard give you full visibility into the entire system.
 
 ---
 
@@ -133,6 +144,7 @@ graph TB
 | **Multi-tenancy** | Single-instance file lock | **Namespaced CRDs**, RBAC, NetworkPolicy |
 | **Scaling** | Vertical only | **Horizontal** — stateless control plane, HPA |
 | **Channel connections** | In-process per channel | Dedicated **Deployment** per channel type |
+| **External tools** | Plugin SDKs, in-process registries | **MCPServer CRD** — managed deployments or external endpoints, auto-discovery, prefixed tool namespacing |
 | **Observability** | Application logs | `kubectl logs`, events, conditions, **OpenTelemetry traces/metrics**, **k9s-style TUI**, **web dashboard** |
 
 ---
@@ -151,6 +163,7 @@ graph TB
 | **Skills-as-ConfigMap** | ConfigMap volume | SkillPacks generate ConfigMaps mounted into agent pods — portable, versionable, namespace-scoped |
 | **Skill sidecars with auto-RBAC** | Role / ClusterRole | SkillPacks can declare sidecar containers with RBAC rules — the controller injects the container and provisions ephemeral, least-privilege RBAC per run |
 | **PersonaPacks** | Operator Bundle | Pre-configured agent bundles — the controller stamps out SympoziumInstances, Schedules, and memory ConfigMaps. Activating a pack is a single TUI action |
+| **MCP servers as CRD** | Deployment + Service | `MCPServer` resources declare external tool providers — the controller manages deployment lifecycle, probes for tools, and the bridge sidecar translates MCP protocol to agent tool calls. Prefixed tool names prevent collisions across providers |
 | **Node probe DaemonSet** | DaemonSet | Discovers host-installed inference providers (Ollama, vLLM) by probing localhost ports — annotates nodes so the control plane can offer model selection and node pinning without manual configuration |
 
 ---
@@ -174,6 +187,7 @@ sympozium/
 │   ├── controller/         # Kubernetes controllers (6 reconcilers)
 │   ├── orchestrator/       # Agent pod builder & spawner
 │   ├── apiserver/          # API server handlers
+│   ├── mcpbridge/          # MCP bridge sidecar (SSE/stdio adapter)
 │   ├── eventbus/           # NATS JetStream event bus
 │   ├── ipc/                # IPC bridge (fsnotify + NATS)
 │   ├── webhook/            # Policy enforcement webhooks

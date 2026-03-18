@@ -13,6 +13,8 @@ import { SchedulesPage } from "@/pages/schedules";
 import { PersonasPage } from "@/pages/personas";
 import { PersonaDetailPage } from "@/pages/persona-detail";
 import { GatewayPage } from "@/pages/gateway";
+import { McpServersPage } from "@/pages/mcp-servers";
+import { McpServerDetailPage } from "@/pages/mcp-server-detail";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth();
@@ -52,6 +54,8 @@ export default function App() {
         <Route path="/schedules" element={<SchedulesPage />} />
         <Route path="/personas" element={<PersonasPage />} />
         <Route path="/personas/:name" element={<PersonaDetailPage />} />
+        <Route path="/mcp-servers" element={<McpServersPage />} />
+        <Route path="/mcp-servers/:name" element={<McpServerDetailPage />} />
         <Route path="/gateway" element={<GatewayPage />} />
       </Route>
       <Route path="/login" element={<LoginPage />} />

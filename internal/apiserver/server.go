@@ -130,6 +130,13 @@ func (s *Server) buildMux(frontendFS fs.FS, token string) http.Handler {
 	mux.HandleFunc("PATCH /api/v1/personapacks/{name}", s.patchPersonaPack)
 	mux.HandleFunc("DELETE /api/v1/personapacks/{name}", s.deletePersonaPack)
 
+	// MCP Server endpoints
+	mux.HandleFunc("GET /api/v1/mcpservers", s.listMCPServers)
+	mux.HandleFunc("GET /api/v1/mcpservers/{name}", s.getMCPServer)
+	mux.HandleFunc("POST /api/v1/mcpservers", s.createMCPServer)
+	mux.HandleFunc("DELETE /api/v1/mcpservers/{name}", s.deleteMCPServer)
+	mux.HandleFunc("PATCH /api/v1/mcpservers/{name}", s.patchMCPServer)
+
 	// Gateway config endpoints (singleton SympoziumConfig)
 	mux.HandleFunc("GET /api/v1/gateway", s.getGatewayConfig)
 	mux.HandleFunc("POST /api/v1/gateway", s.createGatewayConfig)
@@ -862,6 +869,187 @@ func (s *Server) getSkill(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, sk)
+}
+
+// --- MCP Server handlers ---
+
+func (s *Server) listMCPServers(w http.ResponseWriter, r *http.Request) {
+	// MCPServers are platform-wide — list across all namespaces.
+	var list sympoziumv1alpha1.MCPServerList
+	if err := s.client.List(r.Context(), &list); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, list.Items)
+}
+
+func (s *Server) getMCPServer(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = "default"
+	}
+
+	var mcp sympoziumv1alpha1.MCPServer
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name, Namespace: ns}, &mcp); err != nil {
+		if k8serrors.IsNotFound(err) {
+			http.Error(w, "mcpserver not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, mcp)
+}
+
+// CreateMCPServerRequest is the request body for creating an MCPServer.
+type CreateMCPServerRequest struct {
+	Name          string   `json:"name"`
+	TransportType string   `json:"transportType"`
+	ToolsPrefix   string   `json:"toolsPrefix"`
+	URL           string   `json:"url,omitempty"`
+	Image         string   `json:"image,omitempty"`
+	Timeout       int      `json:"timeout,omitempty"`
+	ToolsAllow    []string `json:"toolsAllow,omitempty"`
+	ToolsDeny     []string `json:"toolsDeny,omitempty"`
+}
+
+func (s *Server) createMCPServer(w http.ResponseWriter, r *http.Request) {
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = "default"
+	}
+
+	var req CreateMCPServerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.Name == "" || req.TransportType == "" || req.ToolsPrefix == "" {
+		http.Error(w, "name, transportType, and toolsPrefix are required", http.StatusBadRequest)
+		return
+	}
+
+	mcp := &sympoziumv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      req.Name,
+			Namespace: ns,
+		},
+		Spec: sympoziumv1alpha1.MCPServerSpec{
+			TransportType: req.TransportType,
+			ToolsPrefix:   req.ToolsPrefix,
+			URL:           req.URL,
+			ToolsAllow:    req.ToolsAllow,
+			ToolsDeny:     req.ToolsDeny,
+		},
+	}
+
+	if req.Timeout > 0 {
+		mcp.Spec.Timeout = req.Timeout
+	}
+
+	if req.Image != "" {
+		mcp.Spec.Deployment = &sympoziumv1alpha1.MCPServerDeployment{
+			Image: req.Image,
+		}
+	}
+
+	if err := s.client.Create(r.Context(), mcp); err != nil {
+		if k8serrors.IsAlreadyExists(err) {
+			http.Error(w, "mcpserver already exists", http.StatusConflict)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	writeJSON(w, mcp)
+}
+
+func (s *Server) deleteMCPServer(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = "default"
+	}
+
+	mcp := &sympoziumv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+	}
+	if err := s.client.Delete(r.Context(), mcp); err != nil {
+		if k8serrors.IsNotFound(err) {
+			http.Error(w, "mcpserver not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// PatchMCPServerRequest is the request body for partially updating an MCPServer.
+type PatchMCPServerRequest struct {
+	TransportType *string  `json:"transportType,omitempty"`
+	URL           *string  `json:"url,omitempty"`
+	ToolsPrefix   *string  `json:"toolsPrefix,omitempty"`
+	Timeout       *int     `json:"timeout,omitempty"`
+	ToolsAllow    []string `json:"toolsAllow,omitempty"`
+	ToolsDeny     []string `json:"toolsDeny,omitempty"`
+}
+
+func (s *Server) patchMCPServer(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		ns = "default"
+	}
+
+	var req PatchMCPServerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var mcp sympoziumv1alpha1.MCPServer
+	if err := s.client.Get(r.Context(), types.NamespacedName{Name: name, Namespace: ns}, &mcp); err != nil {
+		if k8serrors.IsNotFound(err) {
+			http.Error(w, "mcpserver not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if req.TransportType != nil {
+		mcp.Spec.TransportType = *req.TransportType
+	}
+	if req.URL != nil {
+		mcp.Spec.URL = *req.URL
+	}
+	if req.ToolsPrefix != nil {
+		mcp.Spec.ToolsPrefix = *req.ToolsPrefix
+	}
+	if req.Timeout != nil {
+		mcp.Spec.Timeout = *req.Timeout
+	}
+	if req.ToolsAllow != nil {
+		mcp.Spec.ToolsAllow = req.ToolsAllow
+	}
+	if req.ToolsDeny != nil {
+		mcp.Spec.ToolsDeny = req.ToolsDeny
+	}
+
+	if err := s.client.Update(r.Context(), &mcp); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, mcp)
 }
 
 // --- Schedule handlers ---

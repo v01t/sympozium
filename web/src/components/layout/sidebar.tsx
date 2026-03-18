@@ -10,6 +10,7 @@ import {
   Github,
   Heart,
   Globe,
+  Plug,
   PanelLeftClose,
   PanelLeftOpen,
 } from "lucide-react";
@@ -19,6 +20,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 const navItems = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/gateway", label: "Gateway", icon: Globe },
+  { to: "/mcp-servers", label: "MCP Servers", icon: Plug },
   { to: "/instances", label: "Instances", icon: Server },
   { to: "/personas", label: "Persona Packs", icon: Users },
   { to: "/policies", label: "Policies", icon: Shield },

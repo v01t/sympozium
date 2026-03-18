@@ -428,6 +428,47 @@ export interface InstallDefaultPersonaPacksResponse {
   alreadyPresent: string[];
 }
 
+// ── MCPServer ────────────────────────────────────────────────────────────────
+
+export interface MCPSecretRef {
+  name: string;
+}
+
+export interface MCPServerDeployment {
+  image: string;
+  cmd?: string;
+  args?: string[];
+  port?: number;
+  env?: Record<string, string>;
+  secretRefs?: MCPSecretRef[];
+  serviceAccountName?: string;
+}
+
+export interface MCPServerSpec {
+  transportType: string;
+  url?: string;
+  deployment?: MCPServerDeployment;
+  toolsPrefix: string;
+  timeout?: number;
+  replicas?: number;
+  toolsAllow?: string[];
+  toolsDeny?: string[];
+}
+
+export interface MCPServerStatus {
+  ready: boolean;
+  url?: string;
+  toolCount?: number;
+  tools?: string[];
+  conditions?: Condition[];
+}
+
+export interface MCPServer {
+  metadata: ObjectMeta;
+  spec: MCPServerSpec;
+  status?: MCPServerStatus;
+}
+
 // ── Pod info (returned by /api/v1/pods) ──────────────────────────────────────
 
 export interface PodInfo {
@@ -688,6 +729,42 @@ export const api = {
           method: "POST",
         }
       ),
+  },
+
+  mcpServers: {
+    list: () => apiFetch<MCPServer[]>("/api/v1/mcpservers"),
+    get: (name: string) => apiFetch<MCPServer>(`/api/v1/mcpservers/${name}`),
+    create: (data: {
+      name: string;
+      transportType: string;
+      toolsPrefix: string;
+      url?: string;
+      image?: string;
+      timeout?: number;
+      toolsAllow?: string[];
+      toolsDeny?: string[];
+    }) =>
+      apiFetch<MCPServer>("/api/v1/mcpservers", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    delete: (name: string) =>
+      apiFetch<void>(`/api/v1/mcpservers/${name}`, { method: "DELETE" }),
+    patch: (
+      name: string,
+      data: {
+        transportType?: string;
+        url?: string;
+        toolsPrefix?: string;
+        timeout?: number;
+        toolsAllow?: string[];
+        toolsDeny?: string[];
+      }
+    ) =>
+      apiFetch<MCPServer>(`/api/v1/mcpservers/${name}`, {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      }),
   },
 
   pods: {

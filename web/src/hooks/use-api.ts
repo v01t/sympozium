@@ -256,6 +256,57 @@ export function useInstallDefaultPersonaPacks() {
   });
 }
 
+// ── MCP Servers ─────────────────────────────────────────────────────────────
+
+export function useMcpServers() {
+  return useQuery({ queryKey: ["mcpServers"], queryFn: api.mcpServers.list });
+}
+
+export function useMcpServer(name: string) {
+  return useQuery({
+    queryKey: ["mcpServers", name],
+    queryFn: () => api.mcpServers.get(name),
+    enabled: !!name,
+  });
+}
+
+export function useCreateMcpServer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.mcpServers.create,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["mcpServers"] });
+      toast.success("MCP server created");
+    },
+    onError: toastError,
+  });
+}
+
+export function useDeleteMcpServer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.mcpServers.delete,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["mcpServers"] });
+      toast.success("MCP server deleted");
+    },
+    onError: toastError,
+  });
+}
+
+export function usePatchMcpServer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name, ...data }: { name: string; transportType?: string; url?: string; toolsPrefix?: string; timeout?: number; toolsAllow?: string[]; toolsDeny?: string[] }) =>
+      api.mcpServers.patch(name, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["mcpServers"] });
+      toast.success("MCP server updated");
+    },
+    onError: toastError,
+  });
+}
+
 // ── Cluster Info ─────────────────────────────────────────────────────────────
 
 export function useClusterInfo() {
