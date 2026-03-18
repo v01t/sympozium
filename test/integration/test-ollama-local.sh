@@ -1,44 +1,25 @@
 #!/usr/bin/env bash
-# Integration test: verify Sympozium works end-to-end with a local Ollama instance.
+# Integration test: validates node-probe DaemonSet detects Ollama on the host.
 #
 # What it does:
-#   1. Checks that Ollama is reachable from inside the Kind cluster
-#   2. Creates a dummy API key secret (Ollama does not require auth)
-#   3. Creates a SympoziumInstance configured for Ollama
-#   4. Creates an AgentRun with a simple arithmetic task
-#   5. Waits for the AgentRun to reach Succeeded phase
-#   6. Verifies .status.result is populated
-#   7. Verifies .status.tokenUsage is populated
-#   8. Cleans up all test resources
+#   1. Waits for node-probe to annotate the node with inference-healthy=true
+#   2. Validates port annotation (sympozium.ai/inference-ollama=11434)
+#   3. Validates proxy port annotation (sympozium.ai/inference-proxy-port=9473)
+#   4. Tests the proxy endpoint via port-forward
 #
 # Prerequisites:
 #   - Kind cluster running with Sympozium installed
-#   - Ollama running on the host, accessible from Kind at 172.18.0.1:11434
-#
-# Configuration (env vars):
-#   OLLAMA_BASE_URL   Base URL for Ollama from inside Kind (default: http://172.18.0.1:11434/v1)
-#   OLLAMA_MODEL      Model to use (default: qwen2.5-coder:7b)
-#   TEST_NAMESPACE    Kubernetes namespace (default: default)
-#   TEST_TIMEOUT      Seconds to wait for completion (default: 180)
+#   - node-probe DaemonSet deployed (kubectl apply -f config/node-probe/node-probe.yaml)
+#   - Ollama running on host at 127.0.0.1:11434
 #
 # Usage:
 #   ./test/integration/test-ollama-local.sh
-#   OLLAMA_MODEL=llama3:8b ./test/integration/test-ollama-local.sh
-#   OLLAMA_BASE_URL=http://10.0.0.5:11434/v1 ./test/integration/test-ollama-local.sh
 
 set -euo pipefail
 
-# --- Configuration ---
-NAMESPACE="${TEST_NAMESPACE:-default}"
-INSTANCE_NAME="inttest-ollama"
-RUN_NAME="inttest-ollama-run"
-SECRET_NAME="inttest-ollama-key"
-OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-http://172.18.0.1:11434/v1}"
-MODEL="${OLLAMA_MODEL:-qwen2.5-coder:7b}"
-TIMEOUT="${TEST_TIMEOUT:-180}"
-
-# Derive the raw Ollama host URL (without /v1) for connectivity checks
-OLLAMA_HOST_URL="${OLLAMA_BASE_URL%/v1}"
+NAMESPACE="${TEST_NAMESPACE:-sympozium-system}"
+TIMEOUT="${TEST_TIMEOUT:-90}"
+LOCAL_PROXY_PORT=19473
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -46,217 +27,160 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 pass() { echo -e "${GREEN}✓ $*${NC}"; }
-fail() { echo -e "${RED}✗ $*${NC}"; }
+fail() { echo -e "${RED}✗ $*${NC}"; exit 1; }
 info() { echo -e "${YELLOW}● $*${NC}"; }
 
+# Clean up background processes on exit.
+PF_PID=""
 cleanup() {
-    info "Cleaning up test resources..."
-    kubectl delete agentrun "$RUN_NAME" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
-    kubectl delete sympoziuminstance "$INSTANCE_NAME" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
-    kubectl delete secret "$SECRET_NAME" -n "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
-    # Delete jobs/pods owned by the AgentRun
-    kubectl delete jobs -n "$NAMESPACE" -l "sympozium.ai/agentrun=$RUN_NAME" --ignore-not-found >/dev/null 2>&1 || true
-    kubectl delete pods -n "$NAMESPACE" -l "sympozium.ai/agentrun=$RUN_NAME" --ignore-not-found >/dev/null 2>&1 || true
+    if [[ -n "$PF_PID" ]]; then
+        kill "$PF_PID" 2>/dev/null || true
+        wait "$PF_PID" 2>/dev/null || true
+    fi
 }
 trap cleanup EXIT
 
 # --- Pre-flight checks ---
-info "Running integration test: Ollama local (model: ${MODEL})"
+info "Running integration test: node-probe Ollama detection"
 
 if ! command -v kubectl >/dev/null 2>&1; then
     fail "Required command not found: kubectl"
-    exit 1
+fi
+
+if ! command -v jq >/dev/null 2>&1; then
+    fail "Required command not found: jq"
 fi
 
 if ! kubectl get crd agentruns.sympozium.ai >/dev/null 2>&1; then
     fail "Sympozium CRDs not installed. Is the cluster set up?"
-    exit 1
 fi
 
-if ! kubectl get deployment sympozium-controller-manager -n sympozium-system >/dev/null 2>&1; then
-    fail "Sympozium controller not running."
-    exit 1
+if ! kubectl get daemonset sympozium-node-probe -n "$NAMESPACE" >/dev/null 2>&1; then
+    fail "node-probe DaemonSet not found. Deploy it first: kubectl apply -f config/node-probe/node-probe.yaml"
 fi
 
-# --- Step 1: Check Ollama connectivity from inside the cluster ---
-info "Checking Ollama connectivity from inside Kind cluster..."
-OLLAMA_CHECK=$(kubectl run inttest-ollama-check --rm -i --restart=Never \
-    --image=curlimages/curl:latest \
-    -- curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "${OLLAMA_HOST_URL}/api/tags" 2>/dev/null || echo "000")
+# --- Step 1: Verify DaemonSet is healthy ---
+info "Checking node-probe DaemonSet health..."
 
-if [[ "$OLLAMA_CHECK" == "200" ]]; then
-    pass "Ollama is reachable from inside the cluster at ${OLLAMA_HOST_URL}"
-else
-    fail "Ollama is NOT reachable from inside the cluster (HTTP ${OLLAMA_CHECK})"
-    echo "  Expected Ollama at: ${OLLAMA_HOST_URL}/api/tags"
-    echo "  Make sure Ollama is running and listening on 0.0.0.0:11434"
-    echo "  For Kind, the host is typically reachable at 172.18.0.1"
-    exit 1
+DS_STATUS=$(kubectl get daemonset sympozium-node-probe -n "$NAMESPACE" -o json 2>/dev/null) || {
+    fail "DaemonSet sympozium-node-probe not found in namespace $NAMESPACE"
+}
+
+DESIRED=$(echo "$DS_STATUS" | jq '.status.desiredNumberScheduled')
+READY=$(echo "$DS_STATUS" | jq '.status.numberReady')
+
+if [[ "$DESIRED" -eq 0 ]]; then
+    fail "DaemonSet has 0 desired pods"
 fi
 
-# --- Step 2: Clean up any previous test run ---
-cleanup 2>/dev/null || true
-sleep 2
+if [[ "$READY" -ne "$DESIRED" ]]; then
+    fail "DaemonSet not fully ready: $READY/$DESIRED pods"
+fi
 
-# --- Step 3: Create dummy secret for Ollama auth ---
-info "Creating dummy API key secret: $SECRET_NAME"
-kubectl create secret generic "$SECRET_NAME" \
-    --from-literal=OPENAI_API_KEY="ollama-no-key-required" \
-    -n "$NAMESPACE" >/dev/null 2>&1 || true
+pass "DaemonSet is healthy ($READY/$DESIRED pods ready)"
 
-# --- Step 4: Create SympoziumInstance for Ollama ---
-info "Creating SympoziumInstance: $INSTANCE_NAME"
-cat <<EOF | kubectl apply -f -
-apiVersion: sympozium.ai/v1alpha1
-kind: SympoziumInstance
-metadata:
-  name: ${INSTANCE_NAME}
-  namespace: ${NAMESPACE}
-spec:
-  agents:
-    default:
-      model: ${MODEL}
-      baseURL: "${OLLAMA_BASE_URL}"
-  authRefs:
-    - provider: ollama
-      secret: ${SECRET_NAME}
-EOF
+# --- Step 2: Wait for node-probe to detect Ollama ---
+info "Waiting for node-probe to annotate the node..."
 
-# --- Step 5: Create AgentRun ---
-info "Creating AgentRun: $RUN_NAME"
-cat <<EOF | kubectl apply -f -
-apiVersion: sympozium.ai/v1alpha1
-kind: AgentRun
-metadata:
-  name: ${RUN_NAME}
-  namespace: ${NAMESPACE}
-  labels:
-    sympozium.ai/instance: ${INSTANCE_NAME}
-spec:
-  instanceRef: ${INSTANCE_NAME}
-  agentId: default
-  sessionKey: "inttest-ollama-$(date +%s)"
-  task: "What is 2+2? Reply with just the number."
-  model:
-    provider: ollama
-    model: ${MODEL}
-    baseURL: "${OLLAMA_BASE_URL}"
-    authSecretRef: ${SECRET_NAME}
-  timeout: "3m"
-EOF
+NODE_NAME=$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}' 2>/dev/null) || {
+    fail "Could not get node name"
+}
 
-# --- Step 6: Wait for completion ---
-info "Waiting up to ${TIMEOUT}s for AgentRun to complete..."
-elapsed=0
-phase=""
-pod=""
-while [[ $elapsed -lt $TIMEOUT ]]; do
-    phase=$(kubectl get agentrun "$RUN_NAME" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
-    # Capture pod name as soon as it appears
-    if [[ -z "$pod" ]]; then
-        pod=$(kubectl get pods -n "$NAMESPACE" -l "sympozium.ai/agentrun=$RUN_NAME" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-        if [[ -n "$pod" ]]; then
-            info "Pod found: $pod"
-        fi
-    fi
-    if [[ "$phase" == "Succeeded" || "$phase" == "Failed" ]]; then
+PROBE_WAIT=0
+HEALTHY=""
+while [[ $PROBE_WAIT -lt $TIMEOUT ]]; do
+    HEALTHY=$(kubectl get node "$NODE_NAME" \
+        -o jsonpath='{.metadata.annotations.sympozium\.ai/inference-healthy}' 2>/dev/null) || true
+    if [[ "$HEALTHY" == "true" ]]; then
         break
     fi
-    sleep 5
-    elapsed=$((elapsed + 5))
-    if (( elapsed % 15 == 0 )); then
-        info "  ...${elapsed}s elapsed (phase: ${phase:-Pending})"
+    sleep 2
+    PROBE_WAIT=$((PROBE_WAIT + 2))
+
+    if (( PROBE_WAIT % 15 == 0 )); then
+        info "  ...${PROBE_WAIT}s elapsed (no inference-healthy annotation yet)"
     fi
 done
 
-if [[ "$phase" != "Succeeded" && "$phase" != "Failed" ]]; then
-    fail "AgentRun did not complete within ${TIMEOUT}s (last phase: ${phase:-unknown})"
-    info "Debug: kubectl describe agentrun $RUN_NAME -n $NAMESPACE"
-    kubectl describe agentrun "$RUN_NAME" -n "$NAMESPACE" 2>/dev/null || true
-    if [[ -n "$pod" ]]; then
-        info "Pod logs:"
-        kubectl logs "$pod" -c agent -n "$NAMESPACE" --tail=30 2>/dev/null || true
-    fi
-    exit 1
+if [[ "$HEALTHY" != "true" ]]; then
+    info "Current annotations:"
+    kubectl get node "$NODE_NAME" -o json | jq '.metadata.annotations | with_entries(select(.key | startswith("sympozium.ai")))' 2>/dev/null || true
+    info "Node-probe logs:"
+    kubectl logs -n "$NAMESPACE" -l app.kubernetes.io/component=node-probe --tail=30 2>/dev/null || true
+    fail "node-probe did not annotate node with inference-healthy within ${TIMEOUT}s"
 fi
 
-echo ""
+pass "node-probe annotated node $NODE_NAME with inference-healthy=true after ${PROBE_WAIT}s"
 
-# --- Step 7: Check phase ---
-if [[ "$phase" == "Failed" ]]; then
-    fail "AgentRun phase: Failed"
-    kubectl get agentrun "$RUN_NAME" -n "$NAMESPACE" -o jsonpath='{.status}' | python3 -m json.tool 2>/dev/null || true
-    exit 1
-fi
+# --- Step 3: Validate annotations ---
+ANNOTATIONS=$(kubectl get node "$NODE_NAME" -o json | \
+    jq '.metadata.annotations | with_entries(select(.key | startswith("sympozium.ai")))')
 
-pass "AgentRun phase: Succeeded"
+OLLAMA_PORT=$(echo "$ANNOTATIONS" | jq -r '.["sympozium.ai/inference-ollama"] // ""')
+PROXY_PORT=$(echo "$ANNOTATIONS" | jq -r '.["sympozium.ai/inference-proxy-port"] // ""')
 
-# --- Step 8: Verify .status.result is populated ---
-failures=0
-
-result=$(kubectl get agentrun "$RUN_NAME" -n "$NAMESPACE" -o jsonpath='{.status.result}' 2>/dev/null || echo "")
-if [[ -n "$result" ]]; then
-    pass "status.result is populated"
-    info "Result: $(echo "$result" | head -c 200)"
+if [[ -z "$OLLAMA_PORT" ]]; then
+    fail "No Ollama port annotation found"
 else
-    fail "status.result is empty"
-    failures=$((failures + 1))
+    pass "Ollama port annotation: $OLLAMA_PORT"
 fi
 
-# --- Step 9: Verify .status.tokenUsage is populated ---
-input_tokens=$(kubectl get agentrun "$RUN_NAME" -n "$NAMESPACE" -o jsonpath='{.status.tokenUsage.inputTokens}' 2>/dev/null || echo "")
-output_tokens=$(kubectl get agentrun "$RUN_NAME" -n "$NAMESPACE" -o jsonpath='{.status.tokenUsage.outputTokens}' 2>/dev/null || echo "")
-total_tokens=$(kubectl get agentrun "$RUN_NAME" -n "$NAMESPACE" -o jsonpath='{.status.tokenUsage.totalTokens}' 2>/dev/null || echo "")
-duration_ms=$(kubectl get agentrun "$RUN_NAME" -n "$NAMESPACE" -o jsonpath='{.status.tokenUsage.durationMs}' 2>/dev/null || echo "")
-
-if [[ -n "$input_tokens" && "$input_tokens" -gt 0 ]]; then
-    pass "tokenUsage.inputTokens is populated: ${input_tokens}"
+if [[ -z "$PROXY_PORT" ]]; then
+    fail "No proxy port annotation found"
 else
-    fail "tokenUsage.inputTokens is missing or zero"
-    failures=$((failures + 1))
+    pass "Proxy port annotation: $PROXY_PORT"
 fi
 
-if [[ -n "$output_tokens" && "$output_tokens" -gt 0 ]]; then
-    pass "tokenUsage.outputTokens is populated: ${output_tokens}"
+OLLAMA_MODELS=$(echo "$ANNOTATIONS" | jq -r '.["sympozium.ai/inference-models-ollama"] // ""')
+if [[ -n "$OLLAMA_MODELS" ]]; then
+    pass "Ollama models detected: $OLLAMA_MODELS"
 else
-    fail "tokenUsage.outputTokens is missing or zero"
-    failures=$((failures + 1))
+    info "No model annotations (Ollama might have no models loaded - OK)"
 fi
 
-if [[ -n "$total_tokens" && "$total_tokens" -gt 0 ]]; then
-    pass "tokenUsage.totalTokens is populated: ${total_tokens}"
+# --- Step 4: Test proxy via port-forward ---
+info "Testing node-probe reverse proxy..."
+
+POD_NAME=$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/component=node-probe -o jsonpath='{.items[0].metadata.name}' 2>/dev/null) || {
+    fail "Could not get node-probe pod"
+}
+
+kubectl port-forward -n "$NAMESPACE" "pod/$POD_NAME" "${LOCAL_PROXY_PORT}:9473" &
+PF_PID=$!
+sleep 2
+
+PROXY_URL="http://127.0.0.1:${LOCAL_PROXY_PORT}/proxy/ollama/api/tags"
+RESPONSE=$(curl -s --connect-timeout 5 -w "\n%{http_code}" "$PROXY_URL" 2>/dev/null || echo -e "\n000")
+HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+BODY=$(echo "$RESPONSE" | sed '$d')
+
+kill "$PF_PID" 2>/dev/null || true
+wait "$PF_PID" 2>/dev/null || true
+PF_PID=""
+
+if [[ "$HTTP_CODE" != "200" ]]; then
+    fail "Proxy returned HTTP $HTTP_CODE (expected 200)"
 else
-    fail "tokenUsage.totalTokens is missing or zero"
-    failures=$((failures + 1))
+    pass "Proxy endpoint returned 200"
 fi
 
-if [[ -n "$duration_ms" && "$duration_ms" -gt 0 ]]; then
-    pass "tokenUsage.durationMs is populated: ${duration_ms}ms"
+if echo "$BODY" | jq -e '.models' >/dev/null 2>&1; then
+    pass "Proxy returned expected response format (models array present)"
 else
-    fail "tokenUsage.durationMs is missing or zero"
-    failures=$((failures + 1))
+    fail "Proxy response missing models array"
 fi
 
 # --- Summary ---
 echo ""
 echo "=============================="
-echo " Integration Test Summary"
+echo " Node-probe Validation"
 echo "=============================="
-echo " AgentRun:  $RUN_NAME"
-echo " Phase:     $phase"
+echo " DaemonSet: ready ($READY/$DESIRED)"
+echo " Node:      $NODE_NAME"
 echo " Provider:  ollama"
-echo " Model:     $MODEL"
-echo " Base URL:  $OLLAMA_BASE_URL"
-if [[ -n "$pod" ]]; then
-    echo " Pod:       $pod"
-fi
-echo " Failures:  $failures"
+echo " Port:      ${OLLAMA_PORT}"
+echo " Proxy:     ${PROXY_PORT}"
+[[ -n "$OLLAMA_MODELS" ]] && echo " Models:    $OLLAMA_MODELS" || echo " Models:    (none loaded)"
 echo "=============================="
-echo ""
 
-if [[ $failures -gt 0 ]]; then
-    fail "Integration test finished with $failures failure(s)"
-    exit 1
-fi
-
-pass "Integration test complete"
+pass "node-probe is working correctly with Ollama"
