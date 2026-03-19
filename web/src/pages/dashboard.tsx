@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   Card,
   CardHeader,
@@ -15,24 +15,116 @@ import {
   TableBody,
   TableCell,
 } from "@/components/ui/table";
-import { useInstances, useRuns, usePolicies, useSkills, useSchedules, usePersonaPacks, useClusterInfo } from "@/hooks/use-api";
+import {
+  useInstances,
+  useRuns,
+  useClusterInfo,
+  useObservabilityMetrics,
+} from "@/hooks/use-api";
 import { useWebSocket } from "@/hooks/use-websocket";
 import { formatAge, truncate } from "@/lib/utils";
 import { Link } from "react-router-dom";
 import {
   Server,
   Play,
-  Shield,
   Wrench,
   Clock,
-  Users,
   Activity,
-  HardDrive,
-  Box,
-  Layers,
   Gauge,
+  Zap,
+  RotateCcw,
+  GripVertical,
+  Lock,
+  Unlock,
+  AlertTriangle,
+  CheckCircle2,
+  XCircle,
+  Radio,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  ResponsiveGridLayout,
+  useContainerWidth,
+} from "react-grid-layout";
+import type { Layout, ResponsiveLayouts } from "react-grid-layout";
+import "react-grid-layout/css/styles.css";
+
+// ---------------------------------------------------------------------------
+// Layout persistence
+// ---------------------------------------------------------------------------
+
+const LAYOUT_KEY = "sympozium-dashboard-layout";
+const LAYOUT_LOCKED_KEY = "sympozium-dashboard-locked";
+
+type PanelId =
+  | "activity"
+  | "tokensByModel"
+  | "topTools"
+  | "recentRuns"
+  | "eventStream"
+  | "runStatus"
+  | "recentErrors";
+
+const DEFAULT_LAYOUTS: ResponsiveLayouts = {
+  lg: [
+    // Left column: activity chart + tokens by model
+    { i: "activity", x: 0, y: 0, w: 6, h: 7, minW: 4, minH: 3 },
+    { i: "tokensByModel", x: 0, y: 7, w: 6, h: 4, minW: 4, minH: 3 },
+    // Right column: recent runs + tool invocations
+    { i: "recentRuns", x: 6, y: 0, w: 6, h: 7, minW: 4, minH: 4 },
+    { i: "topTools", x: 6, y: 7, w: 6, h: 4, minW: 4, minH: 3 },
+    // Full-width bottom row
+    { i: "eventStream", x: 0, y: 11, w: 6, h: 6, minW: 4, minH: 4 },
+    { i: "runStatus", x: 6, y: 11, w: 3, h: 5, minW: 3, minH: 4 },
+    { i: "recentErrors", x: 9, y: 11, w: 3, h: 5, minW: 3, minH: 4 },
+  ],
+  md: [
+    { i: "activity", x: 0, y: 0, w: 5, h: 7, minW: 4, minH: 3 },
+    { i: "tokensByModel", x: 0, y: 7, w: 5, h: 4, minW: 4, minH: 3 },
+    { i: "recentRuns", x: 5, y: 0, w: 5, h: 7, minW: 4, minH: 4 },
+    { i: "topTools", x: 5, y: 7, w: 5, h: 4, minW: 4, minH: 3 },
+    { i: "eventStream", x: 0, y: 11, w: 5, h: 6, minW: 4, minH: 4 },
+    { i: "runStatus", x: 5, y: 11, w: 5, h: 5, minW: 3, minH: 4 },
+    { i: "recentErrors", x: 0, y: 16, w: 10, h: 5, minW: 4, minH: 4 },
+  ],
+  sm: [
+    { i: "activity", x: 0, y: 0, w: 6, h: 7, minW: 4, minH: 3 },
+    { i: "recentRuns", x: 0, y: 7, w: 6, h: 6, minW: 4, minH: 4 },
+    { i: "tokensByModel", x: 0, y: 13, w: 6, h: 4, minW: 4, minH: 3 },
+    { i: "topTools", x: 0, y: 17, w: 6, h: 5, minW: 4, minH: 3 },
+    { i: "eventStream", x: 0, y: 22, w: 6, h: 6, minW: 4, minH: 4 },
+    { i: "runStatus", x: 0, y: 28, w: 6, h: 5, minW: 3, minH: 4 },
+    { i: "recentErrors", x: 0, y: 33, w: 6, h: 5, minW: 4, minH: 4 },
+  ],
+};
+
+function loadLayouts(): ResponsiveLayouts {
+  try {
+    const raw = localStorage.getItem(LAYOUT_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {
+    // fall through
+  }
+  return DEFAULT_LAYOUTS;
+}
+
+function saveLayouts(layouts: ResponsiveLayouts) {
+  localStorage.setItem(LAYOUT_KEY, JSON.stringify(layouts));
+}
+
+function loadLocked(): boolean {
+  try {
+    const raw = localStorage.getItem(LAYOUT_LOCKED_KEY);
+    if (raw !== null) return JSON.parse(raw);
+  } catch {
+    // fall through
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 type ActivityBucket = {
   ts: number;
@@ -67,135 +159,46 @@ function buildActivityBuckets(
   const now = new Date();
   const buckets: ActivityBucket[] = [];
 
-  if (range === "1h") {
-    const start = new Date(now.getTime() - 59 * 60 * 1000);
-    start.setSeconds(0, 0);
-    for (let i = 0; i < 60; i++) {
-      const d = new Date(start.getTime() + i * 60 * 1000);
-      buckets.push({
-        ts: d.getTime(),
-        label: d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        runs: 0,
-        failed: 0,
-        durationTotalSec: 0,
-        durationSamples: 0,
-        durationValuesSec: [],
-        avgDurationSec: 0,
-        p95DurationSec: 0,
-        agentsInstalled: 0,
-        serving: 0,
-      });
-    }
-    for (const run of runs || []) {
-      const created = new Date(run.metadata.creationTimestamp || "").getTime();
-      if (!Number.isFinite(created) || created < buckets[0].ts) continue;
-      const idx = Math.floor((created - buckets[0].ts) / (60 * 1000));
-      if (idx < 0 || idx >= buckets.length) continue;
-      buckets[idx].runs++;
-      const phase = (run.status?.phase || "").toLowerCase();
-      if (phase === "failed" || phase === "error") buckets[idx].failed++;
-      const durationSec = (run.status?.tokenUsage?.durationMs || 0) / 1000;
-      if (durationSec > 0) {
-        buckets[idx].durationTotalSec += durationSec;
-        buckets[idx].durationSamples++;
-        buckets[idx].durationValuesSec.push(durationSec);
-      }
-    }
-    for (const b of buckets) {
-      b.avgDurationSec = b.durationSamples > 0 ? b.durationTotalSec / b.durationSamples : 0;
-      b.p95DurationSec = percentile(b.durationValuesSec, 95);
-    }
-    const createdAt = (instances || [])
-      .map((i) => new Date(i.metadata.creationTimestamp || "").getTime())
-      .filter((n) => Number.isFinite(n))
-      .sort((a, b) => a - b);
-    let ptr = 0;
-    for (let i = 0; i < buckets.length; i++) {
-      const bucketEnd = buckets[i].ts + 60 * 1000 - 1;
-      while (ptr < createdAt.length && createdAt[ptr] <= bucketEnd) ptr++;
-      buckets[i].agentsInstalled = ptr;
-    }
-    countServingPerBucket(runs, buckets, 60 * 1000);
-    return buckets;
-  }
+  const configs: Record<RangeKey, { count: number; stepMs: number; labelFn: (d: Date) => string; startFn: () => Date }> = {
+    "1h": {
+      count: 60,
+      stepMs: 60 * 1000,
+      labelFn: (d) => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      startFn: () => { const s = new Date(now.getTime() - 59 * 60 * 1000); s.setSeconds(0, 0); return s; },
+    },
+    "24h": {
+      count: 24,
+      stepMs: 60 * 60 * 1000,
+      labelFn: (d) => d.toLocaleTimeString([], { hour: "numeric" }),
+      startFn: () => { const s = new Date(now.getTime() - 23 * 60 * 60 * 1000); s.setMinutes(0, 0, 0); return s; },
+    },
+    "7d": {
+      count: 7,
+      stepMs: 24 * 60 * 60 * 1000,
+      labelFn: (d) => d.toLocaleDateString([], { month: "short", day: "numeric" }),
+      startFn: () => { const s = new Date(now); s.setHours(0, 0, 0, 0); s.setDate(s.getDate() - 6); return s; },
+    },
+  };
 
-  if (range === "24h") {
-    const start = new Date(now.getTime() - 23 * 60 * 60 * 1000);
-    start.setMinutes(0, 0, 0);
-    for (let i = 0; i < 24; i++) {
-      const d = new Date(start.getTime() + i * 60 * 60 * 1000);
-      buckets.push({
-        ts: d.getTime(),
-        label: d.toLocaleTimeString([], { hour: "numeric" }),
-        runs: 0,
-        failed: 0,
-        durationTotalSec: 0,
-        durationSamples: 0,
-        durationValuesSec: [],
-        avgDurationSec: 0,
-        p95DurationSec: 0,
-        agentsInstalled: 0,
-        serving: 0,
-      });
-    }
-    for (const run of runs || []) {
-      const created = new Date(run.metadata.creationTimestamp || "").getTime();
-      if (!Number.isFinite(created) || created < buckets[0].ts) continue;
-      const idx = Math.floor((created - buckets[0].ts) / (60 * 60 * 1000));
-      if (idx < 0 || idx >= buckets.length) continue;
-      buckets[idx].runs++;
-      const phase = (run.status?.phase || "").toLowerCase();
-      if (phase === "failed" || phase === "error") buckets[idx].failed++;
-      const durationSec = (run.status?.tokenUsage?.durationMs || 0) / 1000;
-      if (durationSec > 0) {
-        buckets[idx].durationTotalSec += durationSec;
-        buckets[idx].durationSamples++;
-        buckets[idx].durationValuesSec.push(durationSec);
-      }
-    }
-    for (const b of buckets) {
-      b.avgDurationSec = b.durationSamples > 0 ? b.durationTotalSec / b.durationSamples : 0;
-      b.p95DurationSec = percentile(b.durationValuesSec, 95);
-    }
-    const createdAt = (instances || [])
-      .map((i) => new Date(i.metadata.creationTimestamp || "").getTime())
-      .filter((n) => Number.isFinite(n))
-      .sort((a, b) => a - b);
-    let ptr = 0;
-    for (let i = 0; i < buckets.length; i++) {
-      const bucketEnd = buckets[i].ts + 60 * 60 * 1000 - 1;
-      while (ptr < createdAt.length && createdAt[ptr] <= bucketEnd) ptr++;
-      buckets[i].agentsInstalled = ptr;
-    }
-    countServingPerBucket(runs, buckets, 60 * 60 * 1000);
-    return buckets;
-  }
+  const cfg = configs[range];
+  const start = cfg.startFn();
 
-  const days = 7;
-  const start = new Date(now);
-  start.setHours(0, 0, 0, 0);
-  start.setDate(start.getDate() - (days - 1));
-  for (let i = 0; i < days; i++) {
-    const d = new Date(start);
-    d.setDate(start.getDate() + i);
+  for (let i = 0; i < cfg.count; i++) {
+    const d = new Date(start.getTime() + i * cfg.stepMs);
     buckets.push({
       ts: d.getTime(),
-      label: d.toLocaleDateString([], { month: "short", day: "numeric" }),
-      runs: 0,
-      failed: 0,
-      durationTotalSec: 0,
-      durationSamples: 0,
-      durationValuesSec: [],
-      avgDurationSec: 0,
-      p95DurationSec: 0,
-      agentsInstalled: 0,
-      serving: 0,
+      label: cfg.labelFn(d),
+      runs: 0, failed: 0,
+      durationTotalSec: 0, durationSamples: 0, durationValuesSec: [],
+      avgDurationSec: 0, p95DurationSec: 0,
+      agentsInstalled: 0, serving: 0,
     });
   }
+
   for (const run of runs || []) {
     const created = new Date(run.metadata.creationTimestamp || "").getTime();
     if (!Number.isFinite(created) || created < buckets[0].ts) continue;
-    const idx = Math.floor((created - buckets[0].ts) / (24 * 60 * 60 * 1000));
+    const idx = Math.floor((created - buckets[0].ts) / cfg.stepMs);
     if (idx < 0 || idx >= buckets.length) continue;
     buckets[idx].runs++;
     const phase = (run.status?.phase || "").toLowerCase();
@@ -207,27 +210,27 @@ function buildActivityBuckets(
       buckets[idx].durationValuesSec.push(durationSec);
     }
   }
+
   for (const b of buckets) {
     b.avgDurationSec = b.durationSamples > 0 ? b.durationTotalSec / b.durationSamples : 0;
     b.p95DurationSec = percentile(b.durationValuesSec, 95);
   }
+
   const createdAt = (instances || [])
     .map((i) => new Date(i.metadata.creationTimestamp || "").getTime())
     .filter((n) => Number.isFinite(n))
     .sort((a, b) => a - b);
   let ptr = 0;
   for (let i = 0; i < buckets.length; i++) {
-    const bucketEnd = buckets[i].ts + 24 * 60 * 60 * 1000 - 1;
+    const bucketEnd = buckets[i].ts + cfg.stepMs - 1;
     while (ptr < createdAt.length && createdAt[ptr] <= bucketEnd) ptr++;
     buckets[i].agentsInstalled = ptr;
   }
-  countServingPerBucket(runs, buckets, 24 * 60 * 60 * 1000);
+
+  countServingPerBucket(runs, buckets, cfg.stepMs);
   return buckets;
 }
 
-/** Count serving-phase runs active during each bucket. A serving run is active
- *  from its creation time onward (it's long-lived), so it counts in every
- *  bucket whose end is >= its creation timestamp. */
 function countServingPerBucket(
   runs: NonNullable<ReturnType<typeof useRuns>["data"]>,
   buckets: ActivityBucket[],
@@ -253,42 +256,113 @@ function linePath(points: Array<{ x: number; y: number }>) {
   return points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x},${p.y}`).join(" ");
 }
 
+function compactTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return n.toString();
+}
+
+// ---------------------------------------------------------------------------
+// Panel wrapper — drag handle + consistent chrome
+// ---------------------------------------------------------------------------
+
+function PanelWrapper({
+  children,
+  title,
+  icon: Icon,
+  locked,
+  actions,
+}: {
+  children: React.ReactNode;
+  title: string;
+  icon?: React.ComponentType<{ className?: string }>;
+  locked: boolean;
+  actions?: React.ReactNode;
+}) {
+  return (
+    <Card className="h-full flex flex-col overflow-hidden">
+      <CardHeader className="flex flex-row items-center justify-between gap-2 py-3 px-4 space-y-0">
+        <div className="flex items-center gap-2 min-w-0">
+          {!locked && (
+            <GripVertical className="drag-handle h-4 w-4 shrink-0 cursor-grab text-muted-foreground/50 hover:text-muted-foreground active:cursor-grabbing" />
+          )}
+          {Icon && <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />}
+          <CardTitle className="text-sm truncate">{title}</CardTitle>
+        </div>
+        {actions && <div className="flex items-center gap-1 shrink-0">{actions}</div>}
+      </CardHeader>
+      <CardContent className="flex-1 overflow-auto pt-0 px-4 pb-4">
+        {children}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main dashboard
+// ---------------------------------------------------------------------------
+
 export function DashboardPage() {
   const instances = useInstances();
   const runs = useRuns();
-  const policies = usePolicies();
-  const skills = useSkills();
-  const schedules = useSchedules();
-  const personaPacks = usePersonaPacks();
   const clusterInfo = useClusterInfo();
+  const observability = useObservabilityMetrics();
   const { events, connected } = useWebSocket();
   const [range, setRange] = useState<RangeKey>("24h");
   const [durationMode, setDurationMode] = useState<DurationMode>("avg");
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const [layouts, setLayouts] = useState<ResponsiveLayouts>(loadLayouts);
+  const [locked, setLocked] = useState(loadLocked);
+  const { width: containerWidth, containerRef } = useContainerWidth({ initialWidth: 1200 });
 
-  const recentRuns = (runs.data || [])
-    .sort(
-      (a, b) =>
-        new Date(b.metadata.creationTimestamp || "").getTime() -
-        new Date(a.metadata.creationTimestamp || "").getTime()
-    )
-    .slice(0, 8);
-
-  const activeRuns = (runs.data || []).filter(
-    (r) => r.status?.phase === "Running" || r.status?.phase === "Pending" || r.status?.phase === "Serving"
+  // --- Computed data ---
+  const recentRuns = useMemo(
+    () =>
+      (runs.data || [])
+        .sort(
+          (a, b) =>
+            new Date(b.metadata.creationTimestamp || "").getTime() -
+            new Date(a.metadata.creationTimestamp || "").getTime()
+        )
+        .slice(0, 8),
+    [runs.data]
   );
+
+  const activeRuns = useMemo(
+    () =>
+      (runs.data || []).filter(
+        (r) =>
+          r.status?.phase === "Running" ||
+          r.status?.phase === "Pending" ||
+          r.status?.phase === "Serving"
+      ),
+    [runs.data]
+  );
+
+  const failedRuns = useMemo(
+    () =>
+      (runs.data || [])
+        .filter(
+          (r) => {
+            const p = (r.status?.phase || "").toLowerCase();
+            return p === "failed" || p === "error";
+          }
+        )
+        .sort(
+          (a, b) =>
+            new Date(b.metadata.creationTimestamp || "").getTime() -
+            new Date(a.metadata.creationTimestamp || "").getTime()
+        )
+        .slice(0, 6),
+    [runs.data]
+  );
+
   const activity = useMemo(
     () => buildActivityBuckets(runs.data || [], instances.data || [], range),
     [runs.data, instances.data, range]
   );
-  const totalInRange = useMemo(
-    () => activity.reduce((acc, b) => acc + b.runs, 0),
-    [activity]
-  );
-  const failedInRange = useMemo(
-    () => activity.reduce((acc, b) => acc + b.failed, 0),
-    [activity]
-  );
+  const totalInRange = useMemo(() => activity.reduce((acc, b) => acc + b.runs, 0), [activity]);
+  const failedInRange = useMemo(() => activity.reduce((acc, b) => acc + b.failed, 0), [activity]);
   const failureRate = totalInRange > 0 ? (failedInRange / totalInRange) * 100 : 0;
   const avgDurationSecInRange = useMemo(() => {
     const dur = activity.reduce((acc, b) => acc + b.durationTotalSec, 0);
@@ -306,51 +380,112 @@ export function DashboardPage() {
     0,
   );
 
+  // --- Run status breakdown ---
+  const runStatusCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const run of runs.data || []) {
+      const p = (run.status?.phase || "unknown").toLowerCase();
+      counts[p] = (counts[p] || 0) + 1;
+    }
+    return counts;
+  }, [runs.data]);
+
+  // --- Observability data ---
+  const obs = observability.data;
+  const inputByModel = obs?.inputByModel || [];
+  const outputByModel = obs?.outputByModel || [];
+  const toolsByName = obs?.toolsByName || [];
+
+  // Merge input/output by model for display
+  const modelBreakdown = useMemo(() => {
+    const map = new Map<string, { input: number; output: number }>();
+    for (const row of inputByModel) {
+      const entry = map.get(row.label) || { input: 0, output: 0 };
+      entry.input = row.value;
+      map.set(row.label, entry);
+    }
+    for (const row of outputByModel) {
+      const entry = map.get(row.label) || { input: 0, output: 0 };
+      entry.output = row.value;
+      map.set(row.label, entry);
+    }
+    return [...map.entries()]
+      .map(([label, v]) => ({ label, input: v.input, output: v.output, total: v.input + v.output }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 6);
+  }, [inputByModel, outputByModel]);
+  const maxModelTotal = Math.max(1, ...modelBreakdown.map((m) => m.total));
+
+  // Top tools sorted
+  const topTools = useMemo(
+    () => [...toolsByName].sort((a, b) => b.value - a.value).slice(0, 8),
+    [toolsByName]
+  );
+  const maxToolValue = Math.max(1, ...topTools.map((t) => t.value));
+
+  // --- Layout handlers ---
+  const handleLayoutChange = useCallback(
+    (_layout: Layout, allLayouts: ResponsiveLayouts) => {
+      setLayouts(allLayouts);
+      saveLayouts(allLayouts);
+    },
+    []
+  );
+
+  const handleResetLayout = useCallback(() => {
+    setLayouts(DEFAULT_LAYOUTS);
+    saveLayouts(DEFAULT_LAYOUTS);
+  }, []);
+
+  const handleToggleLock = useCallback(() => {
+    setLocked((prev) => {
+      const next = !prev;
+      localStorage.setItem(LAYOUT_LOCKED_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  // --- Stat tiles ---
   const stats = [
     {
-      label: "Nodes",
-      value: clusterInfo.data?.nodes ?? "—",
-      icon: HardDrive,
-      to: "/instances",
+      label: "Total Tokens",
+      value: compactTokens((obs?.inputTokensTotal || 0) + (obs?.outputTokensTotal || 0)),
+      icon: Zap,
+      color: "text-amber-400",
+    },
+    {
+      label: "Tool Calls",
+      value: (obs?.toolInvocations || 0).toLocaleString(),
+      icon: Wrench,
       color: "text-blue-400",
-    },
-    {
-      label: "Pods",
-      value: clusterInfo.data?.pods ?? "—",
-      icon: Box,
-      to: "/instances",
-      color: "text-emerald-400",
-    },
-    {
-      label: "Agent Pods",
-      value: totalAgentPods,
-      icon: Play,
-      to: "/instances",
-      color: "text-cyan-400",
-    },
-    {
-      label: "Namespaces",
-      value: clusterInfo.data?.namespaces ?? "—",
-      icon: Layers,
-      to: "/instances",
-      color: "text-orange-400",
     },
     {
       label: "Active Runs",
       value: activeRuns.length,
       icon: Gauge,
-      to: "/runs",
       color: "text-violet-400",
+    },
+    {
+      label: "Failure Rate",
+      value: totalInRange > 0 ? `${failureRate.toFixed(1)}%` : "—",
+      icon: AlertTriangle,
+      color: failureRate > 10 ? "text-red-400" : "text-muted-foreground",
+    },
+    {
+      label: "Avg Duration",
+      value: avgDurationSecInRange > 0 ? `${avgDurationSecInRange.toFixed(1)}s` : "—",
+      icon: Clock,
+      color: "text-cyan-400",
     },
     {
       label: "Instances",
       value: instances.data?.length ?? "—",
       icon: Server,
-      to: "/instances",
       color: "text-purple-400",
     },
   ];
 
+  // --- Activity chart geometry ---
   const chartW = 760;
   const chartH = 250;
   const padX = 32;
@@ -375,8 +510,31 @@ export function DashboardPage() {
   const activeX = hoverIdx !== null ? xFor(hoverIdx) : null;
   const activeYDuration = hoverIdx !== null ? yForDuration(durationFor(activity[hoverIdx])) : null;
 
+  // --- Run status donut geometry ---
+  const statusEntries = useMemo(() => {
+    const palette: Record<string, string> = {
+      succeeded: "#34d399",
+      failed: "#f87171",
+      error: "#f87171",
+      running: "#60a5fa",
+      pending: "#facc15",
+      serving: "#fbbf24",
+      unknown: "#6b7280",
+    };
+    const entries = Object.entries(runStatusCounts).map(([phase, count]) => ({
+      phase,
+      count,
+      color: palette[phase] || palette.unknown,
+    }));
+    entries.sort((a, b) => b.count - a.count);
+    return entries;
+  }, [runStatusCounts]);
+  const totalRuns = statusEntries.reduce((s, e) => s + e.count, 0);
+
+  // --- Render ---
   return (
     <div className="space-y-6">
+      {/* Header + Cluster Status bar */}
       <div className="flex items-center justify-between gap-6">
         <div className="shrink-0">
           <h1 className="text-2xl font-bold text-white">Dashboard</h1>
@@ -404,16 +562,8 @@ export function DashboardPage() {
               <div className="text-lg font-semibold text-foreground">{clusterInfo.data?.namespaces ?? "—"}</div>
             </div>
             <div className="text-center">
-              <div className="text-xs text-muted-foreground">Failure Rate</div>
-              <div className={`text-lg font-semibold ${failureRate > 10 ? "text-red-400" : "text-foreground"}`}>
-                {totalInRange > 0 ? `${failureRate.toFixed(1)}%` : "—"}
-              </div>
-            </div>
-            <div className="text-center">
-              <div className="text-xs text-muted-foreground">Avg Duration</div>
-              <div className="text-lg font-semibold text-foreground">
-                {avgDurationSecInRange > 0 ? `${avgDurationSecInRange.toFixed(1)}s` : "—"}
-              </div>
+              <div className="text-xs text-muted-foreground">Agent Pods</div>
+              <div className="text-lg font-semibold text-foreground">{totalAgentPods}</div>
             </div>
             {clusterInfo.data?.version && (
               <div className="text-center">
@@ -425,14 +575,14 @@ export function DashboardPage() {
         </div>
       </div>
 
+      {/* Stat tiles row */}
       <Card className="overflow-hidden">
         <CardContent className="p-0">
           <div className="grid grid-cols-2 divide-x divide-y divide-border/60 sm:grid-cols-3 lg:grid-cols-6 lg:divide-y-0">
             {stats.map((stat) => (
-              <Link
+              <div
                 key={stat.label}
-                to={stat.to}
-                className="group flex min-h-24 items-center gap-3 px-4 py-3 transition-colors hover:bg-white/[0.03]"
+                className="flex min-h-24 items-center gap-3 px-4 py-3"
               >
                 <div className="rounded-md bg-background/60 p-2 border border-border/50">
                   <stat.icon className={`h-4 w-4 ${stat.color}`} />
@@ -441,266 +591,265 @@ export function DashboardPage() {
                   <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
                     {stat.label}
                   </div>
-                  {instances.isLoading ? (
+                  {runs.isLoading ? (
                     <Skeleton className="mt-1 h-6 w-10" />
                   ) : (
                     <div className="text-xl font-bold leading-tight">{stat.value}</div>
                   )}
                 </div>
-              </Link>
+              </div>
             ))}
           </div>
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <CardTitle className="text-base">Agent Activity</CardTitle>
-            <p className="text-xs text-muted-foreground mt-1">
-              Runs over time with failed runs highlighted
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              size="sm"
-              variant={durationMode === "avg" ? "default" : "outline"}
-              className="h-7 text-xs"
-              onClick={() => setDurationMode("avg")}
-            >
-              Avg
-            </Button>
-            <Button
-              size="sm"
-              variant={durationMode === "p95" ? "default" : "outline"}
-              className="h-7 text-xs"
-              onClick={() => setDurationMode("p95")}
-            >
-              P95
-            </Button>
-            <Button
-              size="sm"
-              variant={range === "1h" ? "default" : "outline"}
-              className="h-7 text-xs"
-              onClick={() => setRange("1h")}
-            >
-              1h
-            </Button>
-            <Button
-              size="sm"
-              variant={range === "24h" ? "default" : "outline"}
-              className="h-7 text-xs"
-              onClick={() => setRange("24h")}
-            >
-              24hr
-            </Button>
-            <Button
-              size="sm"
-              variant={range === "7d" ? "default" : "outline"}
-              className="h-7 text-xs"
-              onClick={() => setRange("7d")}
-            >
-              7 days
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="mb-3 flex flex-wrap items-center gap-4 text-xs">
-            <span className="text-muted-foreground">
-              Total runs: <span className="text-foreground font-semibold">{totalInRange}</span>
-            </span>
-            <span className="text-cyan-400">
-              {durationMode === "p95" ? "P95 duration" : "Avg duration"}:{" "}
-              <span className="font-semibold">
-                {(durationMode === "p95" ? p95DurationSecInRange : avgDurationSecInRange).toFixed(1)}s
-              </span>
-            </span>
-            <span className="text-red-400">
-              Failed runs: <span className="font-semibold">{failedInRange}</span>
-            </span>
-            <span className="text-muted-foreground">
-              Failure rate: <span className="text-foreground font-semibold">{failureRate.toFixed(1)}%</span>
-            </span>
-            {totalServing > 0 && (
-              <span className="text-yellow-400">
-                Serving: <span className="font-semibold">{totalServing}</span>
-              </span>
-            )}
-          </div>
-          {runs.isLoading ? (
-            <Skeleton className="h-[250px] w-full" />
+      {/* Layout controls */}
+      <div className="flex items-center justify-end gap-2">
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 text-xs gap-1.5 text-muted-foreground"
+          onClick={handleToggleLock}
+        >
+          {locked ? (
+            <>
+              <Lock className="h-3 w-3" /> Locked
+            </>
           ) : (
-            <div className="relative h-[250px] w-full rounded-lg border border-border/50 bg-background/40 p-2">
-              <svg viewBox={`0 0 ${chartW} ${chartH}`} className="h-full w-full">
-                {[0, 0.25, 0.5, 0.75, 1].map((t) => {
-                  const y = padY + innerH - innerH * t;
-                  return (
-                    <line
-                      key={t}
-                      x1={padX}
-                      x2={chartW - padX}
-                      y1={y}
-                      y2={y}
-                      stroke="currentColor"
-                      className="text-border/60"
-                      strokeWidth={1}
-                    />
-                  );
-                })}
-
-                {activeX !== null && (
-                  <line
-                    x1={activeX}
-                    x2={activeX}
-                    y1={padY}
-                    y2={chartH - padY}
-                    stroke="currentColor"
-                    className="text-blue-300/60"
-                    strokeDasharray="4 3"
-                    strokeWidth={1}
-                  />
-                )}
-
-                {activity.map((b, i) => (
-                  <g key={b.ts}>
-                    <rect
-                      x={xFor(i) - barW / 2}
-                      y={yForAgents(b.agentsInstalled)}
-                      width={barW}
-                      height={padY + innerH - yForAgents(b.agentsInstalled)}
-                      className="pointer-events-none fill-cyan-400/15"
-                    />
-                  </g>
-                ))}
-
-                <path
-                  d={linePath(durationPoints)}
-                  fill="none"
-                  stroke="currentColor"
-                  className="text-blue-400"
-                  strokeWidth={2.5}
-                />
-
-                {/* Serving agents line */}
-                {totalServing > 0 && (
-                  <path
-                    d={linePath(servingPoints)}
-                    fill="none"
-                    stroke="currentColor"
-                    className="text-yellow-400"
-                    strokeWidth={2}
-                    strokeDasharray="6 3"
-                  />
-                )}
-                {totalServing > 0 && activity.map((b, i) => (
-                  <circle
-                    key={`srv-${b.ts}`}
-                    cx={xFor(i)}
-                    cy={yForServing(b.serving)}
-                    r={hoverIdx === i ? 4 : 2.5}
-                    className="fill-yellow-400"
-                  />
-                ))}
-
-                {activity.map((b, i) => (
-                  <g key={`pt-${b.ts}`}>
-                    <circle
-                      cx={xFor(i)}
-                      cy={yForDuration(durationFor(b))}
-                      r={hoverIdx === i ? 5 : 3.5}
-                      className="cursor-pointer fill-blue-400"
-                      onMouseEnter={() => setHoverIdx(i)}
-                    />
-                    {b.failed > 0 && (
-                      <circle
-                        cx={xFor(i)}
-                        cy={yForDuration(durationFor(b))}
-                        r={hoverIdx === i ? 7 : 6}
-                        className="cursor-pointer fill-transparent stroke-red-400"
-                        strokeWidth={2}
-                        onMouseEnter={() => setHoverIdx(i)}
-                      />
-                    )}
-                  </g>
-                ))}
-
-                {activity.map((b, i) => (
-                  <text
-                    key={`x-${b.ts}`}
-                    x={xFor(i)}
-                    y={chartH - 5}
-                    textAnchor="middle"
-                    className={`fill-current text-[10px] ${
-                      i % Math.ceil(activity.length / 8) === 0 || i === activity.length - 1
-                        ? "text-muted-foreground"
-                        : "text-transparent"
-                    }`}
-                  >
-                    {b.label}
-                  </text>
-                ))}
-
-                {activeX !== null && activeYDuration !== null && (
-                  <circle cx={activeX} cy={activeYDuration} r={6} className="fill-blue-300/30" />
-                )}
-              </svg>
-
-              {activePoint && (
-                <div className="pointer-events-none absolute right-3 top-3 rounded-md border border-white/10 bg-black/70 px-3 py-2 text-xs backdrop-blur">
-                  <div className="font-semibold text-foreground">{activePoint.label}</div>
-                  <div className="text-blue-300">
-                    {durationMode === "p95" ? "P95 duration" : "Avg duration"}:{" "}
-                    {(durationMode === "p95" ? activePoint.p95DurationSec : activePoint.avgDurationSec).toFixed(1)}s
-                  </div>
-                  <div className="text-muted-foreground">Runs: {activePoint.runs}</div>
-                  <div className="text-red-300">Failed: {activePoint.failed}</div>
-                  <div className="text-cyan-300">Agents installed: {activePoint.agentsInstalled}</div>
-                  {activePoint.serving > 0 && (
-                    <div className="text-yellow-300">Serving: {activePoint.serving}</div>
-                  )}
-                </div>
-              )}
-              <div className="mt-1 flex items-center gap-4 px-2 text-xs">
-                <span className="inline-flex items-center gap-2 text-muted-foreground">
-                  <span className="h-2 w-2 rounded-full bg-blue-400" />
-                  {durationMode === "p95" ? "P95 run duration" : "Avg run duration"}
-                </span>
-                <span className="inline-flex items-center gap-2 text-muted-foreground">
-                  <span className="h-2 w-2 rounded-sm bg-cyan-400/40" />
-                  Agents installed (bars)
-                </span>
-                <span className="inline-flex items-center gap-2 text-muted-foreground">
-                  <span className="h-2 w-2 rounded-full bg-yellow-400" />
-                  Serving agents
-                </span>
-                <span className="inline-flex items-center gap-2 text-muted-foreground">
-                  <span className="h-2 w-2 rounded-full bg-red-400" />
-                  Failed buckets
-                </span>
-              </div>
-            </div>
+            <>
+              <Unlock className="h-3 w-3" /> Unlocked
+            </>
           )}
-        </CardContent>
-      </Card>
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 text-xs gap-1.5 text-muted-foreground"
+          onClick={handleResetLayout}
+        >
+          <RotateCcw className="h-3 w-3" /> Reset Layout
+        </Button>
+      </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Recent runs */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-base">Recent Runs</CardTitle>
-            <Link
-              to="/runs"
-              className="text-xs text-muted-foreground hover:text-foreground"
-            >
-              View all →
-            </Link>
-          </CardHeader>
-          <CardContent>
+      {/* Draggable grid panels */}
+      <div ref={containerRef}>
+      <ResponsiveGridLayout
+        className="layout"
+        width={containerWidth}
+        layouts={layouts}
+        breakpoints={{ lg: 1200, md: 768, sm: 0 }}
+        cols={{ lg: 12, md: 10, sm: 6 }}
+        rowHeight={40}
+        onLayoutChange={handleLayoutChange}
+        dragConfig={{ enabled: !locked, handle: ".drag-handle" }}
+        resizeConfig={{ enabled: !locked }}
+        containerPadding={[0, 0]}
+        margin={[16, 16]}
+      >
+        {/* ---- Agent Activity ---- */}
+        <div key="activity">
+          <PanelWrapper
+            title="Agent Activity"
+            icon={Activity}
+            locked={locked}
+            actions={
+              <div className="flex items-center gap-1">
+                <Button size="sm" variant={durationMode === "avg" ? "default" : "outline"} className="h-6 text-[11px] px-2" onClick={() => setDurationMode("avg")}>Avg</Button>
+                <Button size="sm" variant={durationMode === "p95" ? "default" : "outline"} className="h-6 text-[11px] px-2" onClick={() => setDurationMode("p95")}>P95</Button>
+                <div className="w-px h-4 bg-border/60 mx-1" />
+                <Button size="sm" variant={range === "1h" ? "default" : "outline"} className="h-6 text-[11px] px-2" onClick={() => setRange("1h")}>1h</Button>
+                <Button size="sm" variant={range === "24h" ? "default" : "outline"} className="h-6 text-[11px] px-2" onClick={() => setRange("24h")}>24hr</Button>
+                <Button size="sm" variant={range === "7d" ? "default" : "outline"} className="h-6 text-[11px] px-2" onClick={() => setRange("7d")}>7d</Button>
+              </div>
+            }
+          >
+            <div className="mb-2 flex flex-wrap items-center gap-4 text-xs">
+              <span className="text-muted-foreground">
+                Total runs: <span className="text-foreground font-semibold">{totalInRange}</span>
+              </span>
+              <span className="text-cyan-400">
+                {durationMode === "p95" ? "P95 duration" : "Avg duration"}:{" "}
+                <span className="font-semibold">
+                  {(durationMode === "p95" ? p95DurationSecInRange : avgDurationSecInRange).toFixed(1)}s
+                </span>
+              </span>
+              <span className="text-red-400">
+                Failed: <span className="font-semibold">{failedInRange}</span>
+              </span>
+              {totalServing > 0 && (
+                <span className="text-yellow-400">
+                  Serving: <span className="font-semibold">{totalServing}</span>
+                </span>
+              )}
+            </div>
+            {runs.isLoading ? (
+              <Skeleton className="h-full min-h-[180px] w-full" />
+            ) : (
+              <div className="relative h-full min-h-[180px] w-full rounded-lg border border-border/50 bg-background/40 p-2">
+                <svg viewBox={`0 0 ${chartW} ${chartH}`} className="h-full w-full" onMouseLeave={() => setHoverIdx(null)}>
+                  {[0, 0.25, 0.5, 0.75, 1].map((t) => {
+                    const y = padY + innerH - innerH * t;
+                    return <line key={t} x1={padX} x2={chartW - padX} y1={y} y2={y} stroke="currentColor" className="text-border/60" strokeWidth={1} />;
+                  })}
+                  {activeX !== null && (
+                    <line x1={activeX} x2={activeX} y1={padY} y2={chartH - padY} stroke="currentColor" className="text-blue-300/60" strokeDasharray="4 3" strokeWidth={1} />
+                  )}
+                  {activity.map((b, i) => (
+                    <rect key={b.ts} x={xFor(i) - barW / 2} y={yForAgents(b.agentsInstalled)} width={barW} height={padY + innerH - yForAgents(b.agentsInstalled)} className="pointer-events-none fill-cyan-400/15" />
+                  ))}
+                  <path d={linePath(durationPoints)} fill="none" stroke="currentColor" className="text-blue-400" strokeWidth={2.5} />
+                  {totalServing > 0 && (
+                    <path d={linePath(servingPoints)} fill="none" stroke="currentColor" className="text-yellow-400" strokeWidth={2} strokeDasharray="6 3" />
+                  )}
+                  {totalServing > 0 && activity.map((b, i) => (
+                    <circle key={`srv-${b.ts}`} cx={xFor(i)} cy={yForServing(b.serving)} r={hoverIdx === i ? 4 : 2.5} className="fill-yellow-400" />
+                  ))}
+                  {activity.map((b, i) => (
+                    <g key={`pt-${b.ts}`}>
+                      <circle cx={xFor(i)} cy={yForDuration(durationFor(b))} r={hoverIdx === i ? 5 : 3.5} className="cursor-pointer fill-blue-400" onMouseEnter={() => setHoverIdx(i)} />
+                      {b.failed > 0 && (
+                        <circle cx={xFor(i)} cy={yForDuration(durationFor(b))} r={hoverIdx === i ? 7 : 6} className="cursor-pointer fill-transparent stroke-red-400" strokeWidth={2} onMouseEnter={() => setHoverIdx(i)} />
+                      )}
+                    </g>
+                  ))}
+                  {activity.map((b, i) => (
+                    <text key={`x-${b.ts}`} x={xFor(i)} y={chartH - 5} textAnchor="middle" className={`fill-current text-[10px] ${i % Math.ceil(activity.length / 8) === 0 || i === activity.length - 1 ? "text-muted-foreground" : "text-transparent"}`}>
+                      {b.label}
+                    </text>
+                  ))}
+                  {activeX !== null && activeYDuration !== null && (
+                    <circle cx={activeX} cy={activeYDuration} r={6} className="fill-blue-300/30" />
+                  )}
+                </svg>
+                {activePoint && (
+                  <div className="pointer-events-none absolute right-3 top-3 rounded-md border border-white/10 bg-black/70 px-3 py-2 text-xs backdrop-blur">
+                    <div className="font-semibold text-foreground">{activePoint.label}</div>
+                    <div className="text-blue-300">
+                      {durationMode === "p95" ? "P95 duration" : "Avg duration"}:{" "}
+                      {(durationMode === "p95" ? activePoint.p95DurationSec : activePoint.avgDurationSec).toFixed(1)}s
+                    </div>
+                    <div className="text-muted-foreground">Runs: {activePoint.runs}</div>
+                    <div className="text-red-300">Failed: {activePoint.failed}</div>
+                    <div className="text-cyan-300">Agents installed: {activePoint.agentsInstalled}</div>
+                    {activePoint.serving > 0 && (
+                      <div className="text-yellow-300">Serving: {activePoint.serving}</div>
+                    )}
+                  </div>
+                )}
+                <div className="mt-1 flex items-center gap-4 px-2 text-xs">
+                  <span className="inline-flex items-center gap-2 text-muted-foreground">
+                    <span className="h-2 w-2 rounded-full bg-blue-400" />
+                    {durationMode === "p95" ? "P95 run duration" : "Avg run duration"}
+                  </span>
+                  <span className="inline-flex items-center gap-2 text-muted-foreground">
+                    <span className="h-2 w-2 rounded-sm bg-cyan-400/40" />
+                    Agents installed
+                  </span>
+                  <span className="inline-flex items-center gap-2 text-muted-foreground">
+                    <span className="h-2 w-2 rounded-full bg-yellow-400" />
+                    Serving
+                  </span>
+                  <span className="inline-flex items-center gap-2 text-muted-foreground">
+                    <span className="h-2 w-2 rounded-full bg-red-400" />
+                    Failed
+                  </span>
+                </div>
+              </div>
+            )}
+          </PanelWrapper>
+        </div>
+
+        {/* ---- Token Usage by Model ---- */}
+        <div key="tokensByModel">
+          <PanelWrapper title="Token Usage by Model" icon={Zap} locked={locked}>
+            {observability.isLoading ? (
+              <div className="space-y-3">
+                {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
+              </div>
+            ) : modelBreakdown.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4">No model data yet</p>
+            ) : (
+              <div className="space-y-3">
+                {modelBreakdown.map((m) => (
+                  <div key={m.label}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-mono text-foreground truncate max-w-[60%]">{m.label}</span>
+                      <span className="text-xs text-muted-foreground font-mono">
+                        {compactTokens(m.input)} in / {compactTokens(m.output)} out
+                      </span>
+                    </div>
+                    <div className="h-2 w-full rounded-full bg-background/60 border border-border/50 overflow-hidden">
+                      <div className="h-full flex">
+                        <div
+                          className="bg-blue-400 transition-all"
+                          style={{ width: `${(m.input / maxModelTotal) * 100}%` }}
+                        />
+                        <div
+                          className="bg-emerald-400 transition-all"
+                          style={{ width: `${(m.output / maxModelTotal) * 100}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                <div className="flex items-center gap-4 text-[11px] text-muted-foreground pt-1">
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full bg-blue-400" /> Input
+                  </span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full bg-emerald-400" /> Output
+                  </span>
+                </div>
+              </div>
+            )}
+          </PanelWrapper>
+        </div>
+
+        {/* ---- Top Tools ---- */}
+        <div key="topTools">
+          <PanelWrapper title="Tool Invocations" icon={Wrench} locked={locked}>
+            {observability.isLoading ? (
+              <div className="space-y-3">
+                {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}
+              </div>
+            ) : topTools.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4">No tool data yet</p>
+            ) : (
+              <div className="space-y-2">
+                {topTools.map((t) => (
+                  <div key={t.label} className="flex items-center gap-3">
+                    <span className="text-xs font-mono text-foreground w-28 truncate shrink-0">{t.label}</span>
+                    <div className="flex-1 h-2 rounded-full bg-background/60 border border-border/50 overflow-hidden">
+                      <div
+                        className="h-full bg-blue-400/70 rounded-full transition-all"
+                        style={{ width: `${(t.value / maxToolValue) * 100}%` }}
+                      />
+                    </div>
+                    <span className="text-xs text-muted-foreground font-mono w-12 text-right shrink-0">
+                      {t.value >= 1000 ? compactTokens(t.value) : Math.round(t.value).toLocaleString()}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </PanelWrapper>
+        </div>
+
+        {/* ---- Recent Runs ---- */}
+        <div key="recentRuns">
+          <PanelWrapper
+            title="Recent Runs"
+            icon={Play}
+            locked={locked}
+            actions={
+              <Link to="/runs" className="text-[11px] text-muted-foreground hover:text-foreground">
+                View all →
+              </Link>
+            }
+          >
             {runs.isLoading ? (
               <div className="space-y-2">
-                {Array.from({ length: 4 }).map((_, i) => (
-                  <Skeleton key={i} className="h-8 w-full" />
-                ))}
+                {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}
               </div>
             ) : recentRuns.length === 0 ? (
               <p className="text-sm text-muted-foreground">No runs yet</p>
@@ -711,6 +860,8 @@ export function DashboardPage() {
                     <TableHead>Name</TableHead>
                     <TableHead>Instance</TableHead>
                     <TableHead>Phase</TableHead>
+                    <TableHead>Tokens</TableHead>
+                    <TableHead>Duration</TableHead>
                     <TableHead>Age</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -718,11 +869,8 @@ export function DashboardPage() {
                   {recentRuns.map((run) => (
                     <TableRow key={run.metadata.name}>
                       <TableCell className="font-mono text-xs">
-                        <Link
-                          to={`/runs/${run.metadata.name}`}
-                          className="hover:text-primary"
-                        >
-                          {truncate(run.metadata.name, 30)}
+                        <Link to={`/runs/${run.metadata.name}`} className="hover:text-primary">
+                          {truncate(run.metadata.name, 24)}
                         </Link>
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
@@ -730,6 +878,16 @@ export function DashboardPage() {
                       </TableCell>
                       <TableCell>
                         <StatusBadge phase={run.status?.phase} />
+                      </TableCell>
+                      <TableCell className="text-xs font-mono text-muted-foreground">
+                        {run.status?.tokenUsage?.totalTokens
+                          ? compactTokens(run.status.tokenUsage.totalTokens)
+                          : "—"}
+                      </TableCell>
+                      <TableCell className="text-xs font-mono text-muted-foreground">
+                        {run.status?.tokenUsage?.durationMs
+                          ? `${(run.status.tokenUsage.durationMs / 1000).toFixed(1)}s`
+                          : "—"}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
                         {formatAge(run.metadata.creationTimestamp)}
@@ -739,55 +897,150 @@ export function DashboardPage() {
                 </TableBody>
               </Table>
             )}
-          </CardContent>
-        </Card>
+          </PanelWrapper>
+        </div>
 
-        {/* Live event stream */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Activity className="h-4 w-4" />
-              Event Stream
-              {connected ? (
-                <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
-                </span>
-              ) : (
-                <span className="h-2 w-2 rounded-full bg-red-400" />
-              )}
-            </CardTitle>
-            <span className="text-xs text-muted-foreground">
-              {events.length} events
-            </span>
-          </CardHeader>
-          <CardContent>
-            <div className="h-64 space-y-1 overflow-auto rounded-lg bg-background/50 border border-border/50 p-3 font-mono text-xs">
+        {/* ---- Event Stream ---- */}
+        <div key="eventStream">
+          <PanelWrapper
+            title="Event Stream"
+            icon={Radio}
+            locked={locked}
+            actions={
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-muted-foreground">{events.length} events</span>
+                {connected ? (
+                  <span className="relative flex h-2 w-2">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+                  </span>
+                ) : (
+                  <span className="h-2 w-2 rounded-full bg-red-400" />
+                )}
+              </div>
+            }
+          >
+            <div className="h-full space-y-1 overflow-auto rounded-lg bg-background/50 border border-border/50 p-3 font-mono text-xs">
               {events.length === 0 ? (
                 <p className="text-muted-foreground">
-                  {connected
-                    ? "Waiting for events…"
-                    : "Connecting to stream…"}
+                  {connected ? "Waiting for events…" : "Connecting to stream…"}
                 </p>
               ) : (
-                events
-                  .slice()
-                  .reverse()
-                  .map((evt, i) => (
-                    <div key={i} className="text-muted-foreground">
-                      <span className="text-emerald-400/80">
-                        {new Date(evt.timestamp).toLocaleTimeString()}
-                      </span>{" "}
-                      <span className="text-blue-400">{evt.topic}</span>{" "}
-                      {typeof evt.data === "string"
-                        ? truncate(evt.data, 80)
-                        : truncate(JSON.stringify(evt.data), 80)}
-                    </div>
-                  ))
+                events.slice().reverse().map((evt, i) => (
+                  <div key={i} className="text-muted-foreground">
+                    <span className="text-emerald-400/80">
+                      {new Date(evt.timestamp).toLocaleTimeString()}
+                    </span>{" "}
+                    <span className="text-blue-400">{evt.topic}</span>{" "}
+                    {typeof evt.data === "string"
+                      ? truncate(evt.data, 80)
+                      : truncate(JSON.stringify(evt.data), 80)}
+                  </div>
+                ))
               )}
             </div>
-          </CardContent>
-        </Card>
+          </PanelWrapper>
+        </div>
+
+        {/* ---- Run Status Breakdown ---- */}
+        <div key="runStatus">
+          <PanelWrapper title="Run Status" icon={CheckCircle2} locked={locked}>
+            {runs.isLoading ? (
+              <Skeleton className="h-32 w-full" />
+            ) : totalRuns === 0 ? (
+              <p className="text-sm text-muted-foreground py-4">No runs yet</p>
+            ) : (
+              <div className="flex items-start gap-6">
+                {/* Donut chart */}
+                <div className="shrink-0">
+                  <svg width="100" height="100" viewBox="0 0 100 100">
+                    {(() => {
+                      const cx = 50, cy = 50, r = 38, stroke = 10;
+                      const circumference = 2 * Math.PI * r;
+                      let offset = 0;
+                      return statusEntries.map((entry) => {
+                        const pct = entry.count / totalRuns;
+                        const dash = pct * circumference;
+                        const gap = circumference - dash;
+                        const el = (
+                          <circle
+                            key={entry.phase}
+                            cx={cx}
+                            cy={cy}
+                            r={r}
+                            fill="none"
+                            stroke={entry.color}
+                            strokeWidth={stroke}
+                            strokeDasharray={`${dash} ${gap}`}
+                            strokeDashoffset={-offset}
+                            transform={`rotate(-90 ${cx} ${cy})`}
+                            className="transition-all"
+                          />
+                        );
+                        offset += dash;
+                        return el;
+                      });
+                    })()}
+                    <text x="50" y="50" textAnchor="middle" dominantBaseline="central" className="fill-foreground text-lg font-bold" fontSize="18">
+                      {totalRuns}
+                    </text>
+                  </svg>
+                </div>
+                {/* Legend */}
+                <div className="space-y-1.5 min-w-0">
+                  {statusEntries.map((entry) => (
+                    <div key={entry.phase} className="flex items-center gap-2 text-xs">
+                      <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: entry.color }} />
+                      <span className="text-muted-foreground capitalize">{entry.phase}</span>
+                      <span className="font-semibold text-foreground ml-auto">{entry.count}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </PanelWrapper>
+        </div>
+
+        {/* ---- Recent Errors ---- */}
+        <div key="recentErrors">
+          <PanelWrapper title="Recent Errors" icon={XCircle} locked={locked}>
+            {runs.isLoading ? (
+              <div className="space-y-2">
+                {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
+              </div>
+            ) : failedRuns.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-6 text-muted-foreground">
+                <CheckCircle2 className="h-8 w-8 text-emerald-400/50 mb-2" />
+                <p className="text-sm">No recent errors</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {failedRuns.map((run) => (
+                  <Link
+                    key={run.metadata.name}
+                    to={`/runs/${run.metadata.name}`}
+                    className="block rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2 hover:border-red-500/40 transition-colors"
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-0.5">
+                      <span className="text-xs font-mono text-foreground truncate">
+                        {truncate(run.metadata.name, 36)}
+                      </span>
+                      <span className="text-[11px] text-muted-foreground shrink-0">
+                        {formatAge(run.metadata.creationTimestamp)}
+                      </span>
+                    </div>
+                    {run.status?.error && (
+                      <p className="text-[11px] text-red-400/80 truncate">
+                        {truncate(run.status.error, 100)}
+                      </p>
+                    )}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </PanelWrapper>
+        </div>
+      </ResponsiveGridLayout>
       </div>
     </div>
   );

@@ -150,6 +150,26 @@
   word-break: break-all;
 }
 
+/* react-grid-layout overrides */
+.react-grid-item.react-grid-placeholder {
+  background: hsl(217 91% 60% / 0.15) !important;
+  border: 1px dashed hsl(217 91% 60% / 0.4) !important;
+  border-radius: 0.5rem;
+  opacity: 1 !important;
+}
+.react-grid-item > .react-resizable-handle::after {
+  border-color: hsl(215 20% 45%) !important;
+}
+.react-grid-item {
+  transition: none !important;
+}
+.react-grid-item.cssTransforms {
+  transition: transform 200ms ease !important;
+}
+.react-grid-item.resizing {
+  transition: none !important;
+}
+
 /* Grid background pattern (matches website) */
 .grid-pattern {
   background-image:
