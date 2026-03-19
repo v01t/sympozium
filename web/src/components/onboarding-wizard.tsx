@@ -641,7 +641,9 @@ export function OnboardingWizard({
         {step === "apikey" && (
           <ScrollArea className="max-h-[60vh]">
           <div className="space-y-4">
-            {(form.provider === "openai" || form.provider === "anthropic") && (
+            {form.provider !== "bedrock" &&
+              form.provider !== "ollama" &&
+              form.provider !== "lm-studio" && (
               <div className="space-y-2">
                 <Label>API Key</Label>
                 <Input
