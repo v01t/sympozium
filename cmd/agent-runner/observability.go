@@ -88,7 +88,7 @@ func (o *agentObservability) initMetrics() {
 	meter := otel.Meter("sympozium/agent-runner")
 	var err error
 
-	o.agentRuns, err = meter.Int64Counter("sympozium.agent.runs")
+	o.agentRuns, err = meter.Int64Counter("sympozium.agent.runs", metric.WithUnit("{run}"), metric.WithDescription("Agent runs completed"))
 	if err != nil {
 		log.Printf("failed creating metric sympozium.agent.runs: %v", err)
 	}
