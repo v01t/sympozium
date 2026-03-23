@@ -175,7 +175,6 @@ rules:
   - sympoziuminstances
   - sympoziumpolicies
   - sympoziumschedules
-  - mcpservers
   verbs:
   - create
   - delete
@@ -194,7 +193,6 @@ rules:
   - sympoziuminstances/finalizers
   - sympoziumpolicies/finalizers
   - sympoziumschedules/finalizers
-  - mcpservers/finalizers
   verbs:
   - update
 - apiGroups:
@@ -208,7 +206,6 @@ rules:
   - sympoziuminstances/status
   - sympoziumpolicies/status
   - sympoziumschedules/status
-  - mcpservers/status
   verbs:
   - get
   - patch
