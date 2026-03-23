@@ -34,6 +34,7 @@ rules:
       - sympoziumschedules
       - personapacks
       - sympoziumconfigs
+      - mcpservers
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["sympozium.ai"]
     resources:

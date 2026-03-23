@@ -10,6 +10,7 @@ nameOverride: ""
 fullnameOverride: ""
 
 # -- Namespace to deploy into (created if it doesn't exist)
+createNamespace: true
 namespace: sympozium-system
 
 # -- Controller (reconciles CRDs, manages agent pods)

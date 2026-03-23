@@ -1,3 +1,4 @@
+{{- if .Values.createNamespace }}
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -5,3 +6,4 @@ metadata:
   labels:
     {{- include "sympozium.labels" . | nindent 4 }}
     control-plane: controller-manager
+{{- end }}
