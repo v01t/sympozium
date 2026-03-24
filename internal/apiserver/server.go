@@ -2397,35 +2397,32 @@ func (s *Server) getCapabilities(w http.ResponseWriter, r *http.Request) {
 	resp := CapabilitiesResponse{}
 
 	// Check if Agent Sandbox CRDs (apps.kubernetes.io) are installed.
+	// We use ServerResourcesForGroupVersion (targeted query) instead of
+	// ServerGroupsAndResources (full scan) because the latter suffers from
+	// partial discovery failures: when ANY unrelated API group is unhealthy
+	// (e.g. metrics-server), it returns a non-nil error with partial results
+	// that silently omit the failed groups. This caused false negatives where
+	// installed CRDs were reported as missing.
+	// NOTE: if the Agent Sandbox API group/version changes, update the
+	// string below AND the sandboxGVR in internal/controller/agentrun_sandbox.go.
 	if s.kube != nil {
-		_, resources, err := s.kube.Discovery().ServerGroupsAndResources()
-		if err != nil {
-			// Partial results are common; only fail if we got nothing.
-			if resources == nil {
-				resp.AgentSandbox = CapabilityStatus{
-					Available: false,
-					Reason:    "Unable to query cluster API resources",
-				}
-				writeJSON(w, resp)
-				return
-			}
-		}
-		found := false
-		for _, rl := range resources {
-			if rl.GroupVersion == "apps.kubernetes.io/v1alpha1" {
-				for _, r := range rl.APIResources {
-					if r.Name == "sandboxes" {
-						found = true
-						break
-					}
+		resources, err := s.kube.Discovery().ServerResourcesForGroupVersion("apps.kubernetes.io/v1alpha1")
+		if err == nil {
+			found := false
+			for _, r := range resources.APIResources {
+				if r.Name == "sandboxes" {
+					found = true
+					break
 				}
 			}
 			if found {
-				break
+				resp.AgentSandbox = CapabilityStatus{Available: true}
+			} else {
+				resp.AgentSandbox = CapabilityStatus{
+					Available: false,
+					Reason:    "Agent Sandbox CRDs (apps.kubernetes.io) are not installed. Install kubernetes-sigs/agent-sandbox to enable this feature.",
+				}
 			}
-		}
-		if found {
-			resp.AgentSandbox = CapabilityStatus{Available: true}
 		} else {
 			resp.AgentSandbox = CapabilityStatus{
 				Available: false,

@@ -153,7 +153,13 @@ export function InstancesPage() {
                   </div>
                 </TableCell>
                 <TableCell className="text-sm">
-                  {inst.spec.authRefs?.[0]?.provider || "—"}
+                  {inst.spec.authRefs?.[0]?.provider || (() => {
+                    const base = inst.spec.agents?.default?.baseURL || "";
+                    if (base.includes("ollama") || base.includes(":11434")) return "ollama";
+                    if (base.includes("lm-studio") || base.includes(":1234")) return "lm-studio";
+                    if (base) return "custom";
+                    return "—";
+                  })()}
                 </TableCell>
                 <TableCell className="text-sm">
                   {inst.spec.agents?.default?.model || "—"}
