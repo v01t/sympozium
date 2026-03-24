@@ -2,122 +2,135 @@
 
 ## System Overview
 
+### Control Plane
+
 ```mermaid
 graph TB
-    subgraph K8S["Kubernetes Cluster"]
-        direction TB
+    ADMIN(["Operator / SRE"]) -- "TUI · Web UI · kubectl" --> CP
 
-        subgraph CP["Control Plane"]
-            CM["Controller Manager<br/><small>SympoziumInstance · AgentRun · PersonaPack<br/>SympoziumPolicy · SkillPack · SympoziumSchedule · MCPServer</small>"]
-            API["API Server<br/><small>HTTP + WebSocket</small>"]
-            WH["Admission Webhook<br/><small>Policy enforcement</small>"]
-            NATS[("NATS JetStream<br/><small>Event bus</small>")]
-            CM --- NATS
-            API --- NATS
-            WH -.- CM
-        end
-
-        subgraph SCHED["Scheduled Tasks"]
-            CS["SympoziumSchedule Controller<br/><small>Cron-based reconciler</small>"]
-            SROUTER["Schedule Router<br/><small>NATS → SympoziumSchedule CRD</small>"]
-            CS -- "creates AgentRuns<br/>on schedule" --> CM
-            SROUTER -- "creates / updates<br/>SympoziumSchedule CRDs" --> CS
-        end
-
-        subgraph CH["Channel Pods  ·  one Deployment per type"]
-            TG["Telegram"]
-            SL["Slack"]
-            DC["Discord"]
-            WA["WhatsApp"]
-        end
-
-        subgraph WE["Web Endpoints  ·  long-lived Deployments"]
-            WP["Web Proxy<br/><small>OpenAI-compat API + MCP</small>"]
-            GW["Envoy Gateway<br/><small>HTTPRoute per instance</small>"]
-            GW -- "routes traffic" --> WP
-        end
-
-        subgraph AP["Agent Pod  ·  ephemeral K8s Job"]
-            direction LR
-            A1["Agent Container<br/><small>LLM provider agnostic</small>"]
-            IPC["IPC Bridge<br/><small>fsnotify → NATS</small>"]
-            SB["Sandbox<br/><small>optional sidecar</small>"]
-            SKS["Skill Sidecars<br/><small>kubectl, helm, etc.<br/>auto-RBAC</small>"]
-            A1 -. "/ipc volume" .- IPC
-            A1 -. optional .- SB
-            A1 -. "/workspace" .- SKS
-        end
-
-        subgraph MCP["MCP Servers  ·  external tool providers"]
-            MCPS["MCPServer Controller<br/><small>Deployment + Service<br/>tool discovery</small>"]
-            MCPB["MCP Bridge Sidecar<br/><small>SSE/stdio adapter</small>"]
-            MCPS -- "deploys &<br/>probes tools" --> MCPB
-        end
-
-        CM -- "reconciles" --> MCP
-        MCPB -. "tools via<br/>mcp-bridge skill" .- A1
-
-        subgraph SEC["Skill RBAC  ·  ephemeral, least-privilege"]
-            SR["Role + RoleBinding<br/><small>namespace-scoped<br/>ownerRef → AgentRun</small>"]
-            SCR["ClusterRole + Binding<br/><small>cluster-scoped<br/>label-based cleanup</small>"]
-        end
-
-        SKS -- "uses" --> SR
-        SKS -- "uses" --> SCR
-        CM -- "creates / deletes" --> SEC
-
-        WP -- "creates per-request<br/>AgentRun Jobs" --> CM
-        WP --- NATS
-        CM -- "creates Deployment<br/>+ Service + HTTPRoute" --> WE
-
-        subgraph MEM["Persistent Memory"]
-            MSCAR["Memory Sidecar<br/><small>SQLite + FTS5</small>"]
-            PVC[("PersistentVolume<br/><small>memory.db</small>")]
-            MCM[("ConfigMap<br/><small>&lt;instance&gt;-memory<br/>(legacy fallback)</small>")]
-            A1 -. "IPC /ipc volume<br/>memory_search · memory_store<br/>memory_list" .- MSCAR
-            MSCAR -- "reads / writes" --> PVC
-            A1 -. "reads /memory<br/>MEMORY.md (legacy)" .-> MCM
-            CM -- "extracts & patches<br/>memory markers (legacy)" --> MCM
-        end
-
-        subgraph NP["Node Probe  ·  DaemonSet (opt-in)"]
-            NPD["Node Probe<br/><small>probes localhost for<br/>inference providers</small>"]
-            NPD -- "annotates node<br/>sympozium.ai/inference-*" --> ETCD
-        end
-
-        subgraph DATA["Data Layer"]
-            ETCD[("etcd<br/><small>CRDs, state</small>")]
-            PG[("PostgreSQL<br/><small>sessions, history</small>")]
-            SK[("SkillPack ConfigMaps<br/><small>mounted at /skills</small>")]
-        end
-
-        API -- "reads node annotations<br/>for provider discovery" --> ETCD
-
-        TG & SL & DC & WA -- "messages" --> NATS
-        NATS -- "tasks" --> IPC
-        IPC -- "channel msgs<br/>schedule requests" --> NATS
-        NATS -- "schedule.upsert" --> SROUTER
+    subgraph CP["Control Plane"]
+        CM["Controller Manager<br/><small>SympoziumInstance · AgentRun<br/>PersonaPack · SkillPack<br/>SympoziumPolicy · MCPServer</small>"]
+        API["API Server<br/><small>HTTP + WebSocket</small>"]
+        WH["Admission Webhook<br/><small>Policy enforcement</small>"]
+        NATS[("NATS JetStream<br/><small>Event bus</small>")]
+        CM --- NATS
+        API --- NATS
+        WH -.- CM
     end
 
-    USER(["User / Chat Client"]) -- "Telegram · Slack<br/>Discord · WhatsApp" --> CH
-    HTTPUSER(["HTTP / API Client"]) -- "REST · MCP<br/>OpenAI-compat" --> GW
-    ADMIN(["Operator / SRE"]) -- "sympozium TUI · Web UI<br/>kubectl · k9s" --> CP
+    subgraph DATA["Data Layer"]
+        ETCD[("etcd<br/><small>CRDs, state</small>")]
+        PG[("PostgreSQL<br/><small>sessions, history</small>")]
+    end
 
-    style K8S fill:#0d1117,stroke:#30363d,color:#c9d1d9
+    CM -- "reconciles CRDs" --> ETCD
+    API -- "reads node annotations" --> ETCD
+    API -- "sessions, history" --> PG
+
+    subgraph SCHED["Scheduled Tasks"]
+        CS["SympoziumSchedule Controller"]
+        SROUTER["Schedule Router"]
+    end
+
+    CS -- "creates AgentRuns on schedule" --> CM
+    NATS -- "schedule.upsert" --> SROUTER
+    SROUTER -- "creates SympoziumSchedule CRDs" --> CS
+
     style CP fill:#1a1a2e,stroke:#e94560,color:#fff
+    style DATA fill:#161b22,stroke:#30363d,color:#c9d1d9
     style SCHED fill:#1a1a2e,stroke:#f5a623,color:#fff
-    style CH fill:#16213e,stroke:#0f3460,color:#fff
-    style WE fill:#16213e,stroke:#f5a623,color:#fff
+    style NATS fill:#e94560,stroke:#fff,color:#fff
+    style ADMIN fill:#1f6feb,stroke:#fff,color:#fff
+```
+
+### Agent Pod Lifecycle
+
+```mermaid
+graph LR
+    CM["Controller Manager"] -- "creates Job or<br/>Sandbox CR" --> AP
+
+    subgraph AP["Agent Pod"]
+        direction TB
+        A1["Agent Container<br/><small>LLM provider agnostic</small>"]
+        IPC["IPC Bridge<br/><small>fsnotify → NATS</small>"]
+        SKS["Skill Sidecars<br/><small>kubectl, helm, etc.</small>"]
+        SB["Sandbox<br/><small>optional</small>"]
+        A1 -. "/ipc volume" .- IPC
+        A1 -. "/workspace" .- SKS
+        A1 -. "optional" .- SB
+    end
+
+    subgraph MEM["Persistent Memory"]
+        MSCAR["Memory Sidecar<br/><small>SQLite + FTS5</small>"]
+        PVC[("PersistentVolume")]
+    end
+
+    A1 -. "memory_search<br/>memory_store" .- MSCAR
+    MSCAR -- "reads / writes" --> PVC
+
+    subgraph SEC["Skill RBAC"]
+        SR["Role + RoleBinding<br/><small>namespace-scoped</small>"]
+        SCR["ClusterRole + Binding<br/><small>cluster-scoped</small>"]
+    end
+
+    SKS -- "uses" --> SR
+    SKS -- "uses" --> SCR
+    CM -- "creates / deletes" --> SEC
+
+    subgraph MCP["MCP Servers"]
+        MCPB["MCP Bridge Sidecar"]
+    end
+
+    MCPB -. "tools" .- A1
+    CM -- "reconciles" --> MCP
+
+    IPC -- "results" --> NATS[("NATS")]
+    NATS -- "tasks" --> IPC
+
     style AP fill:#0f3460,stroke:#53354a,color:#fff
     style MEM fill:#1c2333,stroke:#7c3aed,color:#fff
     style SEC fill:#1c2333,stroke:#238636,color:#fff
-    style DATA fill:#161b22,stroke:#30363d,color:#c9d1d9
     style MCP fill:#1c2333,stroke:#0ea5e9,color:#fff
+    style NATS fill:#e94560,stroke:#fff,color:#fff
+```
+
+### Channels & Web Endpoints
+
+```mermaid
+graph LR
+    USER(["User / Chat Client"]) -- "Telegram · Slack<br/>Discord · WhatsApp" --> CH
+    HTTPUSER(["HTTP / API Client"]) -- "REST · MCP<br/>OpenAI-compat" --> GW
+
+    subgraph CH["Channel Pods"]
+        TG["Telegram"]
+        SL["Slack"]
+        DC["Discord"]
+        WA["WhatsApp"]
+    end
+
+    subgraph WE["Web Endpoints"]
+        GW["Envoy Gateway<br/><small>HTTPRoute per instance</small>"]
+        WP["Web Proxy<br/><small>OpenAI-compat + MCP</small>"]
+        GW -- "routes" --> WP
+    end
+
+    TG & SL & DC & WA -- "messages" --> NATS[("NATS")]
+    WP -- "creates per-request AgentRuns" --> CM["Controller Manager"]
+    WP --- NATS
+    CM -- "creates Deployment<br/>+ Service + HTTPRoute" --> WE
+
+    subgraph NP["Node Probe · DaemonSet"]
+        NPD["Node Probe<br/><small>discovers Ollama, vLLM,<br/>LM Studio on nodes</small>"]
+    end
+
+    NPD -- "annotates nodes<br/>sympozium.ai/inference-*" --> ETCD[("etcd")]
+
+    style CH fill:#16213e,stroke:#0f3460,color:#fff
+    style WE fill:#16213e,stroke:#f5a623,color:#fff
     style NP fill:#1c2333,stroke:#f5a623,color:#fff
     style NATS fill:#e94560,stroke:#fff,color:#fff
     style USER fill:#238636,stroke:#fff,color:#fff
     style HTTPUSER fill:#f5a623,stroke:#fff,color:#000
-    style ADMIN fill:#1f6feb,stroke:#fff,color:#fff
 ```
 
 ## How It Works

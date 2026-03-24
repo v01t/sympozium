@@ -643,7 +643,7 @@ export function OnboardingWizard({
                               <div className="font-mono truncate">{node.nodeName}</div>
                               <div className="text-[10px] text-muted-foreground">
                                 {node.nodeIP} &middot; {nodeProviders.join(", ")}
-                                {nodeModels.length > 0 && ` &middot; ${nodeModels.length} model${nodeModels.length === 1 ? "" : "s"}`}
+                                {nodeModels.length > 0 && ` · ${nodeModels.length} model${nodeModels.length === 1 ? "" : "s"}`}
                               </div>
                             </div>
                             {isSelected && <Check className="h-3 w-3 shrink-0 mt-0.5 ml-auto" />}
