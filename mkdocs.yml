@@ -80,13 +80,17 @@ nav:
     - PersonaPacks: concepts/personapacks.md
     - Skills & Sidecars: concepts/skills.md
     - Channels: concepts/channels.md
+    - Agent Sandboxing: concepts/agent-sandbox.md
     - Security: concepts/security.md
     - Persistent Memory: concepts/persistent-memory.md
     - Scheduled Tasks: concepts/scheduled-tasks.md
     - Observability: concepts/observability.md
   - Guides:
+    - Your First AgentRun: guides/first-agentrun.md
     - Using Ollama: guides/ollama.md
+    - LM Studio & Local Inference: guides/lm-studio.md
     - Serving Mode: guides/serving-mode.md
+    - Writing PersonaPacks: guides/writing-personapacks.md
     - Writing Skills: guides/writing-skills.md
     - Writing Tools: guides/writing-tools.md
     - Writing Integration Tests: guides/writing-integration-tests.md
